@@ -12,3 +12,4 @@ disallow_single_arg_nesting = true
 always_for_in = true
 for_in_replacement = "∈"
 surround_whereop_typeparameters = false
+whitespace_in_kwargs = false

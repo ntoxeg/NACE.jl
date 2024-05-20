@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "NACE"
+version = "0.1.0"
+description = "Non-Axiomatic Agent: achieving objectives in grid environments using Non-Axiomatic-derived modeling and control algorithms."
+authors = ["Adrian Borucki <ntoxeg@llu.cc>"]
+license = "Apache-2.0"
+keywords = ["NACE", "gym", "agent", "AI"]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.12"
+icecream = "^2.1"
+xminigrid = "^0.6.0"
+gymnasium = "^0.29.1"
+minigrid = "^2.3.1"
+
+[tool.poetry.group.dev.dependencies]
+black = "^23.7.0"
+ipython = "^8.4.0"
+ruff = "^0.0.277"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
