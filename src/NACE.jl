@@ -48,7 +48,7 @@ end
 
 struct NaceState
     t::Int
-    state.focus::Set
+    focus::Set
     perceived_externals::Dict
     per_ext_ante::Dict
     act_ante::String
@@ -113,8 +113,10 @@ function predict(state::NaceState)
     per_ext_post = deepcopy(state.per_ext_ante)
     used_rules_sumscore = 0.0f0
     used_rules_amount = 0
+    width = 1
+    height = 1 # HACK
     position_scores::Dict{Tuple{Int,Int}}, highest_highscore::Float32 =
-        filter_hypotheses(state.focus, state.per_ext_ante, state.act_ante, state.rules) # TODO
+        filter_hypotheses(width, height, state)
     max_focus = nothing
     age = 0
 
@@ -122,31 +124,104 @@ function predict(state::NaceState)
         scores, highscore, rule = position_scores[(x, y)]
 
         if applicable(scores, highscore, highest_highscore, rule)
-            per_ext_post[BOARD][(x, y)] = rule.consequence # FIXME: rule[2][3] # WTF is all this
-            per_ext_post[VALUES] = (rule.acc_score, rule.v_inventory) # rule[2][4]
+            per_ext_post[:BOARD][(x, y)] = rule.consequence # FIXME: rule[2][3] # WTF is all this
+            per_ext_post[:VALUES] = (rule.acc_score, rule.v_inventory) # rule[2][4]
             used_rules_sumscore += rule.score # get(scores, rule, 0.0)
             used_rules_amount += 1
         end
 
         if max_focus &&
-           per_ext_post[BOARD][(x, y)] in state.focus &&
-           per_ext_post[BOARD][(x, y)] == max_focus
-            age = max((state.t - per_ext_post[TIMES][(x, y)]), age)
+           per_ext_post[:BOARD][(x, y)] in state.focus &&
+           per_ext_post[:BOARD][(x, y)] == max_focus
+            age = max((state.t - per_ext_post[:TIMES][(x, y)]), age)
         end
     end
     score = used_rules_amount > 0 ? used_rules_sumscore / used_rules_amount : 1.0 # AIRIS confidence
     # but if the certaintly predicted world has higher value, then set prediction score to the best it can be
-    if per_ext_post[VALUES][0] == 1 && score == 1.0 # || (customGoal && customGoal(per_ext_post))
+    if per_ext_post[:VALUES][0] == 1 && score == 1.0 # || (customGoal && customGoal(per_ext_post))
         score = -Inf32
     end
     # while if the certaintly predicted world has lower value, set prediction score to the worst it can be
-    if per_ext_post[VALUES][0] == -1 && score == 1.0
+    if per_ext_post[:VALUES][0] == -1 && score == 1.0
         score = Inf32
     end
-    per_ext_post, score, age, per_ext_post[VALUES]
+    per_ext_post, score, age, per_ext_post[:VALUES]
 end
 
-function filter_hypotheses() end
+function filter_hypotheses(width::Int, height::Int, state::NaceState)
+    attend_positions = Set{Tuple{Int,Int}}()
+    position_scores = Dict{Tuple{Int,Int},Any}()
+    highest_highscore = 0.0f0
+
+    for y ∈ 1:height
+        for x ∈ 1:width
+            if state.per_ext_ante[x][y] in state.focus
+                push!(attend_positions, (x, y))
+                for rule ∈ state.rules
+                    precondition, consequence = rule
+                    action_score_and_preconditions = collect(precondition)
+                    for (x_rel, y_rel, required_state) ∈
+                        action_score_and_preconditions[3:end]
+                        push!(attend_positions, (x + x_rel, y + y_rel))
+                    end
+                end
+            end
+        end
+    end
+
+    for (x, y) ∈ attend_positions
+        scores = Dict{Any,Float64}()
+        position_scores[(x, y)] = scores
+        highscore = 0.0f0
+        highscore_rule = nothing
+        for rule ∈ state.rules
+            precondition, consequence = rule
+            action_score_and_preconditions = collect(precondition)
+            values = action_score_and_preconditions[2]
+            if action_score_and_preconditions[1] == state.act_ante
+                scores[rule] = 0.0f0
+            else
+                continue
+            end
+            continue_flag = false
+            for i ∈ eachindex(values)
+                if values[i] != state.per_ext_ante[:VALUES][i+1]
+                    continue_flag = true
+                    break
+                end
+            end
+            if continue_flag
+                continue
+            end
+            for (x_rel, y_rel, required_state) ∈ action_score_and_preconditions[3:end]
+                if y + y_rel > height || y + y_rel < 1 || x + x_rel > width || x + x_rel < 1
+                    continue_flag = true
+                    break
+                end
+                if state.per_ext_ante[:BOARD][x+x_rel][y+y_rel] == required_state
+                    scores[rule] += 1.0
+                end
+            end
+            if continue_flag
+                continue
+            end
+            scores[rule] /= length(precondition) - 2
+            if scores[rule] > 0.0 &&
+               (scores[rule] > highscore || (scores[rule] == highscore &&
+                 !isnothing(highscore_rule) &&
+                 length(rule[1]) > length(highscore_rule[1])))
+                highscore = get(scores, rule, 0.0)
+                highscore_rule = rule
+            end
+        end
+        position_scores[(x, y)] = (scores, highscore, highscore_rule)
+        if highscore > highest_highscore
+            highest_highscore = highscore
+        end
+    end
+
+    return (position_scores, highest_highscore)
+end
 
 function max_truth_exp() end
 
@@ -154,7 +229,7 @@ function best_hypothesis() end
 
 function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, custom_goal)
     if true
-        [rand(0:7-1)], [], -Inf32, 0
+        [rand(0:7-1)], [], -Inf32, 0 # HACK
     end
     queue = Dequeue([(state, [], 0)]) # state, action list, depth
     encountered = Dict()
@@ -173,7 +248,7 @@ function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, cus
             continue
         end
         world_BOARD_VALUES =
-            World_AsTuple([current_world[BOARD], current_world[VALUES][2:end]]) # TODO
+            World_AsTuple([current_world[:BOARD], current_world[:VALUES][2:end]]) # TODO: adapt to gym grid world
         if world_BOARD_VALUES in encountered && depth >= encountered[world_BOARD_VALUES]
             continue
         end
@@ -181,14 +256,7 @@ function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, cus
             encountered[world_BOARD_VALUES] = depth
         end
         for action ∈ actions
-            new_world, new_score, new_age, _ = predict( # TODO
-                state.t,
-                state.focus,
-                deepcopy(current_world),
-                action,
-                state.rules,
-                custom_goal,
-            )
+            new_world, new_score, new_age, _ = predict(state)
             if new_world == current_world || new_score == Inf32
                 continue
             end
@@ -229,7 +297,7 @@ function cycle(state::NaceState)::Tuple{Set,String}
     # next obs needed (L 109)
     # we need observation diff as well
     # diff state.perceived_externals vs state.per_ext_ante
-    per_ext_post, values = predict(state.per_ext_ante, state.act_ante, state.rules) # TODO
+    per_ext_post, values = predict(state)
 
     state.focus, rule_evidence, new_rules, new_negrules = hypothesize()
     # add "excluded" rules back
