@@ -64,7 +64,7 @@ end
 function (agent::NaceAgent)(obs)
     percept_state = agent.perceptor(obs)
     agent.state = NaceState(
-        agent.state.t + 1,
+        agent.state.t,
         agent.state.focus,
         percept_state,
         agent.state.per_ext_ante,
@@ -77,12 +77,19 @@ end
 
 function nace_perceptor(obs)
     objects = map(i -> IDX_TO_OBJECT[i], obs["image"][:, :, 1])
-    Dict("direction" => obs["direction"], "objects" => objects)
+    Dict(:DIR => obs["direction"], :BOARD => objects, :VALUES => [])  # :BOARD -> "objects", :DIR -> "direction"
 end
 
 function nace_policy(state)
-    rules, action = cycle(state)
-    NaceState(state.t, state.perceived_externals, state.perceived_externals, action, rules)
+    rules, action, focus = cycle(state)
+    NaceState(
+        state.t + 1,
+        focus,
+        state.perceived_externals,
+        state.perceived_externals,
+        action,
+        rules,
+    )
     # IDX_TO_ACTION[rand(0:3)],
 end
 
@@ -123,7 +130,7 @@ function predict(state::NaceState)
     for (x, y) ∈ keys(position_scores)
         scores, highscore, rule = position_scores[(x, y)]
 
-        if applicable(scores, highscore, highest_highscore, rule)
+        if applicable(highscore, highest_highscore, rule) # FIXME: scores needed?
             per_ext_post[:BOARD][(x, y)] = rule.consequence # FIXME: rule[2][3] # WTF is all this
             per_ext_post[:VALUES] = (rule.acc_score, rule.v_inventory) # rule[2][4]
             used_rules_sumscore += rule.score # get(scores, rule, 0.0)
@@ -243,36 +250,35 @@ function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, cus
             println("Planning queue bound enforced!")
             break
         end
-        current_world, planned_actions, depth = queue.popleft()  # Dequeue from the front
+        current_state, planned_actions, depth = queue.popleft()  # Dequeue from the front
         if depth > max_depth  # If maximum depth is reached, stop searching
             continue
         end
-        world_BOARD_VALUES =
-            World_AsTuple([current_world[:BOARD], current_world[:VALUES][2:end]]) # TODO: adapt to gym grid world
+        world_BOARD_VALUES = state.perceived_externals[:VALUES] # TODO: figure this out
         if world_BOARD_VALUES in encountered && depth >= encountered[world_BOARD_VALUES]
             continue
         end
-        if !(world_BOARD_VALUES in encountered || depth) < encountered[world_BOARD_VALUES]
+        if !(world_BOARD_VALUES in encountered) || depth < encountered[world_BOARD_VALUES]
             encountered[world_BOARD_VALUES] = depth
         end
         for action ∈ actions
             new_world, new_score, new_age, _ = predict(state)
-            if new_world == current_world || new_score == Inf32
+            if new_world == current_state || new_score == Inf32
                 continue
             end
-            new_Planned_actions = planned_actions + [action]
+            new_planned_actions = planned_actions + [action]
             if new_score < best_score ||
-               (new_score == best_score && size(new_Planned_actions) < size(best_actions))
-                best_actions = new_Planned_actions
+               (new_score == best_score && size(new_planned_actions) < size(best_actions))
+                best_actions = new_planned_actions
                 best_score = new_score
             end
             if new_age > oldest_age || (new_age == oldest_age &&
-                size(new_Planned_actions) < size(best_action_combination_for_revisit))
-                best_action_combination_for_revisit = new_Planned_actions
+                size(new_planned_actions) < size(best_action_combination_for_revisit))
+                best_action_combination_for_revisit = new_planned_actions
                 oldest_age = new_age
             end
             if new_score == 1.0
-                queue.append((new_world, new_Planned_actions, depth + 1))  # Enqueue children at the end
+                queue.append((new_world, new_planned_actions, depth + 1))  # Enqueue children at the end
             end
             if new_score == -Inf32
                 queue = []
@@ -291,16 +297,20 @@ function weakest_hypothesis() end
 function oldest_observed() end
 
 function cycle(state::NaceState)::Tuple{Set,String}
+    # prediction L 116
+    # predict for the rest of the plan L 130
+    # moved from below
+
     custom_goal = nothing
     rules = state.rules
     rules_exclude = Set()
     # next obs needed (L 109)
     # we need observation diff as well
     # diff state.perceived_externals vs state.per_ext_ante
-    per_ext_post, values = predict(state)
+    new_world, new_score, new_age, _ = predict(state)
 
     state.focus, rule_evidence, new_rules, new_negrules = hypothesize()
-    # add "excluded" rules back
+    # add "excluded" rules back TODO
     fav_actions, airis_score, fav_actions_revisit, oldest_age =
         plan(state, keys(ACTION_TO_IDX), 100, 2000, custom_goal)
     # mode selection & babbling
@@ -308,10 +318,6 @@ function cycle(state::NaceState)::Tuple{Set,String}
 
     # post-block effects: next action && plan determined.
     # action enaction, break here
-
-    # prediction L 116
-    # predict for the rest of the plan L 130
-
     rules,
     action,
     state.focus,
