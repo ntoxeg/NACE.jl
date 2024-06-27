@@ -12,7 +12,8 @@ include("envs.jl")
 include("rule.jl")
 include("agent.jl")
 
-# env = gym.make("MiniGrid-LavaCrossingS11N5-v0", render_mode="human");
+# env = NACE.gym.make("MiniGrid-LavaCrossingS11N5-v0", render_mode="human");
+# obs, info = env.reset();
 
 IDX_TO_ACTION = Dict(
     0 => "Turn left",
@@ -54,6 +55,9 @@ struct NaceState
     act_ante::String
     rules::Set
 end
+
+empty_state() = NaceState(0, Set(), Dict(), Dict(), "", Set())
+
 mutable struct NaceAgent
     state::NaceState
     policy::Function
@@ -77,7 +81,12 @@ end
 
 function nace_perceptor(obs)
     objects = map(i -> IDX_TO_OBJECT[i], obs["image"][:, :, 1])
-    Dict(:DIR => obs["direction"], :BOARD => objects, :VALUES => [])  # :BOARD -> "objects", :DIR -> "direction"
+    Dict(
+        :DIR => obs["direction"],
+        :BOARD => objects,
+        :VALUES => [],
+        :TASK => obs["mission"],
+    )  # :BOARD -> "objects", :DIR -> "direction"
 end
 
 function nace_policy(state)
