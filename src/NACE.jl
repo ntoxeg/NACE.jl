@@ -1,5 +1,5 @@
 module NACE
-export make_random_policy, runthis, runthis_random
+export make_random_policy, run_example, run_example_random
 
 using PyCall
 
@@ -8,13 +8,18 @@ function __init__()
     global miniwrap = pyimport("minigrid.wrappers")
 end
 
+# TODO: refactor into those files
 include("envs.jl")
 include("rule.jl")
 include("agent.jl")
 
+# example of running in the REPL
 # env = NACE.gym.make("MiniGrid-LavaCrossingS11N5-v0", render_mode="human");
 # obs, info = env.reset();
 
+"""
+Actions available in minigrid environments
+"""
 IDX_TO_ACTION = Dict(
     0 => "Turn left",
     1 => "Turn right",
@@ -26,6 +31,11 @@ IDX_TO_ACTION = Dict(
 )
 ACTION_TO_IDX = Dict(value => key for (key, value) ∈ IDX_TO_ACTION)
 
+"""
+    make_random_policy(env)
+
+Return a function that generates a random policy for the given environment.
+"""
 function make_random_policy(env)
     n = convert(Int, env.action_space.n)
 
@@ -36,7 +46,12 @@ function make_random_policy(env)
     random_policy
 end
 
-function runthis_random(env)
+"""
+    run_example_random(env)
+
+@deprecated Run a random policy on an environment.
+"""
+function run_example_random(env)
     obs, info = env.reset()
     agent = Agent(nothing, make_random_policy(env))
     for _ ∈ 1:10
@@ -47,6 +62,20 @@ function runthis_random(env)
     end
 end
 
+"""
+    NaceState(t, focus, perceived_externals, per_ext_ante, act_ante, rules)
+
+Agent state structure
+
+# Arguments
+
+  - `t` :: Int: Current time step.
+  - `focus` :: Set: Set of objects the agent is currently focused on.
+  - `perceived_externals` :: Dict: Perceived external state, including objects, walls, and agents.
+  - `per_ext_ante` :: Dict: Previous perceived external state from the previous time step.
+  - `act_ante` :: String: Action taken in the previous time step.
+  - `rules` :: Set: Set of rules that the agent is currently believes.
+"""
 struct NaceState
     t::Int
     focus::Set
@@ -56,8 +85,30 @@ struct NaceState
     rules::Set
 end
 
-empty_state() = NaceState(0, Set(), Dict(), Dict(), "", Set())
+"""
+    init_state()
 
+Create an empty state with time step zero.
+"""
+init_state() = NaceState(0, Set(), Dict(), Dict(), "", Set())
+
+"""
+    NaceAgent(state, policy, perceptor, effector)
+
+Non-Axiomatic Causal Explorer agent.
+
+Holds the top-level structure of the agent.
+This is what you need to instantiate in order to run NACE.
+
+# Arguments
+
+  - `state` :: NaceState: Current state of the agent.
+  - `policy` :: Function: Policy function that generates an action based on the current state.
+  - `perceptor` :: Function: Perceptor function that generates perceived external state based on the
+    received environment observation.
+  - `effector` :: Function: Effector function that takes an action as input and returns data usable
+    for executing the action via the environment's API.
+"""
 mutable struct NaceAgent
     state::NaceState
     policy::Function
@@ -65,6 +116,15 @@ mutable struct NaceAgent
     effector::Function
 end
 
+"""
+    (agent::NaceAgent)(obs)
+
+Run a step.
+
+Run the complete pipeline from perceiving from the environment observation to
+determining the next action to take.
+Returns the chosen action, does not have side-effects except for updating the agent's state.
+"""
 function (agent::NaceAgent)(obs)
     percept_state = agent.perceptor(obs)
     per_ext_ante =
@@ -81,6 +141,15 @@ function (agent::NaceAgent)(obs)
     agent.effector(agent.state.act_ante)
 end
 
+"""
+    nace_perceptor(obs)
+
+Run the perceptor.
+
+Run the perceptor -- the function that consumes an environment observation
+data structure and returns a representation usable within the agent's internal
+logic.
+"""
 function nace_perceptor(obs)
     objects = map(i -> IDX_TO_OBJECT[i], obs["image"][:, :, 1])
     Dict(
@@ -91,6 +160,11 @@ function nace_perceptor(obs)
     )
 end
 
+"""
+    nace_policy(state)
+
+Run the policy.
+"""
 function nace_policy(state)
     rules, action, focus = cycle(state)
     NaceState(
@@ -104,11 +178,24 @@ function nace_policy(state)
     # IDX_TO_ACTION[rand(0:3)],
 end
 
+"""
+    nace_effector(action)
+
+Run the effector.
+
+Run the effector -- the function that takes an action as input and returns its representation
+usable with the environment's API.
+"""
 function nace_effector(action)
     ACTION_TO_IDX[action]
 end
 
-function runthis(env)
+"""
+    run_example(env)
+
+Run an example on an environment.
+"""
+function run_example(env)
     obs, info = env.reset()
     agent = NaceAgent(
         NaceState(0, Set(), Dict(), Dict(), "Unused", Set()),
