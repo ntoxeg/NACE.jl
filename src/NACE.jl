@@ -219,7 +219,12 @@ function new_hypotheses() end
 
 function verify_hypothesis() end
 
-function predict(state::NaceState, grid_width::Int, grid_height::Int)
+"""
+    predict(state::NaceState, grid_width::Int, grid_height::Int)
+
+Apply rules to predict the future world state. (TODO: explain more)
+"""
+function predict(state::NaceState, grid_width::Int, grid_height::Int)  # TODO: move gird size args somewhere else
     per_ext_post = deepcopy(state.per_ext_ante)
     used_rules_sumscore = 0.0f0
     used_rules_amount = 0
@@ -260,6 +265,11 @@ function predict(state::NaceState, grid_width::Int, grid_height::Int)
     per_ext_post, score, age, per_ext_post[:VALUES]
 end
 
+"""
+    filter_hypotheses(width::Int, height::Int, state::NaceState)
+
+Filter hypotheses down to ones with high enough quality. (TODO: clarify)
+"""
 function filter_hypotheses(width::Int, height::Int, state::NaceState)
     attend_positions = Set{Tuple{Int,Int}}()
     position_scores = Dict{Tuple{Int,Int},Any}()
@@ -339,6 +349,11 @@ function max_truth_exp() end
 
 function best_hypothesis() end
 
+"""
+    plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, custom_goal)
+
+Plan and choose best actions to take. (TODO: clarify / explain)
+"""
 function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, custom_goal)
     if true
         [rand(0:7-1)], [], -Inf32, 0 # HACK
@@ -401,6 +416,14 @@ function weakest_hypothesis() end
 
 function oldest_observed() end
 
+"""
+    cycle(state::NaceState)::Tuple{Set,String}
+
+Perform a single agent cycle.
+
+An agent cycle consists of running all the previously defined logic to produce
+information necessary to update its state and select the next action to take for one timestep.
+"""
 function cycle(state::NaceState)::Tuple{Set,String}
     # prediction L 116
     # predict for the rest of the plan L 130
