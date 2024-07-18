@@ -367,12 +367,12 @@ function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, cus
     best_action_combination_for_revisit = []
     oldest_age = 0.0f0
 
-    while queue
+    while !isempty(queue)
         if size(queue) > max_queue_len
             println("Planning queue bound enforced!")
             break
         end
-        current_state, planned_actions, depth = queue.popleft()  # Dequeue from the front
+        current_state, planned_actions, depth = shift!(queue)  # Dequeue from the front
         if depth > max_depth  # If maximum depth is reached, stop searching
             continue
         end
@@ -400,10 +400,10 @@ function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, cus
                 oldest_age = new_age
             end
             if new_score == 1.0
-                queue.append((new_world, new_planned_actions, depth + 1))  # Enqueue children at the end
+                push!(queue, (new_world, new_planned_actions, depth + 1))  # Enqueue children at the end
             end
             if new_score == -Inf32
-                queue = []
+                queue = Deque{Tuple{NaceState,Vector,Int}}()
                 break
             end
         end
