@@ -156,7 +156,7 @@ function nace_perceptor(obs)
     Dict(
         :DIR => obs["direction"],
         :BOARD => objects,
-        :VALUES => [],
+        :VALUES => map(obj -> obj == "goal" ? 1 : (obj == "lava" ? -1 : 0), objects), # FIXME
         :TASK => obs["mission"],
     )
 end
@@ -167,7 +167,7 @@ end
 Run the policy.
 """
 function nace_policy(state)
-    rules, action, focus = cycle(state)
+    focus, rules, action, _... = cycle(state)
     NaceState(
         state.t + 1,
         focus,
@@ -176,7 +176,6 @@ function nace_policy(state)
         action,
         rules,
     )
-    # IDX_TO_ACTION[rand(0:3)],
 end
 
 """
@@ -212,7 +211,19 @@ function run_example(env)
     end
 end
 
-function hypothesize() end
+"""
+    hypothesize(state::NaceState)
+
+TBW
+"""
+function hypothesize(state::NaceState)
+    focus = state.focus
+    rule_evidence = Dict()
+    new_rules = state.rules
+    new_negrules = state.rules
+
+    focus, rule_evidence, new_rules, new_negrules
+end
 
 function prediction_errors() end
 
@@ -343,7 +354,7 @@ function filter_hypotheses(width::Int, height::Int, state::NaceState)
         end
     end
 
-    return (position_scores, highest_highscore)
+    position_scores, highest_highscore
 end
 
 function max_truth_exp() end
@@ -356,39 +367,39 @@ function best_hypothesis() end
 Plan and choose best actions to take. (TODO: clarify / explain)
 """
 function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, custom_goal)
-    if true
-        [rand(0:7-1)], [], -Inf32, 0 # HACK
-    end
-    queue = Deque{Tuple{NaceState,Vector,Int}}() # state, action list, depth
-    push!(queue, [(state, [], 0)])
-    encountered = Dict()
+    queue = Queue{Tuple{NaceState,Vector,Int}}() # state, action list, depth
+    enqueue!(queue, (state, [], 0))
+
+    encountered_at = Dict()
     best_score = Inf32
     best_actions = []
     best_action_combination_for_revisit = []
     oldest_age = 0.0f0
 
     while !isempty(queue)
-        if size(queue) > max_queue_len
+        if length(queue) > max_queue_len
             println("Planning queue bound enforced!")
             break
         end
-        current_state, planned_actions, depth = shift!(queue)  # Dequeue from the front
+        current_state, planned_actions, depth = dequeue!(queue)  # Dequeue
         if depth > max_depth  # If maximum depth is reached, stop searching
             continue
         end
-        world_BOARD_VALUES = state.perceived_externals[:VALUES] # TODO: figure this out
-        if world_BOARD_VALUES in encountered && depth >= encountered[world_BOARD_VALUES]
+        world_BOARD_VALUES = state.perceived_externals[:VALUES][1] # TODO: figure this out FIXME
+        # println(world_BOARD_VALUES) TODO: remove debug prints
+        # println(encountered_at)
+        # println(depth)
+        if depth >= get(encountered_at, world_BOARD_VALUES, Inf)
             continue
-        end
-        if !(world_BOARD_VALUES in encountered) || depth < encountered[world_BOARD_VALUES]
-            encountered[world_BOARD_VALUES] = depth
+        else
+            encountered_at[world_BOARD_VALUES] = depth
         end
         for action ∈ actions
             new_world, new_score, new_age, _ = predict(state, 7, 7)
             if new_world == current_state || new_score == Inf32
                 continue
             end
-            new_planned_actions = planned_actions + [action]
+            new_planned_actions = [planned_actions; action]
             if new_score < best_score ||
                (new_score == best_score && size(new_planned_actions) < size(best_actions))
                 best_actions = new_planned_actions
@@ -400,10 +411,10 @@ function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, cus
                 oldest_age = new_age
             end
             if new_score == 1.0
-                push!(queue, (new_world, new_planned_actions, depth + 1))  # Enqueue children at the end
+                enqueue!(queue, (state, new_planned_actions, depth + 1))  # Enqueue children FIXME new_world
             end
             if new_score == -Inf32
-                queue = Deque{Tuple{NaceState,Vector,Int}}()
+                queue = Queue{Tuple{NaceState,Vector,Int}}()
                 break
             end
         end
@@ -419,14 +430,14 @@ function weakest_hypothesis() end
 function oldest_observed() end
 
 """
-    cycle(state::NaceState)::Tuple{Set,String}
+    cycle(state::NaceState)
 
 Perform a single agent cycle.
 
 An agent cycle consists of running all the previously defined logic to produce
 information necessary to update its state and select the next action to take for one timestep.
 """
-function cycle(state::NaceState)::Tuple{Set,String}
+function cycle(state::NaceState)#::Tuple{Set,String} FIXME
     # prediction L 116
     # predict for the rest of the plan L 130
     # moved from below
@@ -439,7 +450,7 @@ function cycle(state::NaceState)::Tuple{Set,String}
     # diff state.perceived_externals vs state.per_ext_ante
     new_world, new_score, new_age, _ = predict(state, 7, 7)
 
-    focus, rule_evidence, new_rules, new_negrules = hypothesize()
+    focus, rule_evidence, new_rules, new_negrules = hypothesize(state)
     # add "excluded" rules back TODO
     fav_actions, airis_score, fav_actions_revisit, oldest_age =
         plan(state, keys(ACTION_TO_IDX), 100, 2000, custom_goal)
@@ -448,9 +459,15 @@ function cycle(state::NaceState)::Tuple{Set,String}
 
     # post-block effects: next action && plan determined.
     # action enaction, break here
-    rules,
+
+    action = isempty(fav_actions) ? IDX_TO_ACTION[rand(0:7-1)] : fav_actions[begin] # TODO: proper impl
+    lastplanworld = new_world
+    per_ext_post = state.perceived_externals # FIXME
+    behavior = nothing
+
+    focus,
+    new_rules,
     action,
-    state.focus,
     rule_evidence,
     new_rules,
     new_negrules,
