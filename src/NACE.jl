@@ -1,6 +1,7 @@
 module NACE
 export make_random_policy, run_example, run_example_random
 
+using DataStructures
 using PyCall
 
 function __init__()
@@ -358,7 +359,8 @@ function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, cus
     if true
         [rand(0:7-1)], [], -Inf32, 0 # HACK
     end
-    queue = Dequeue([(state, [], 0)]) # state, action list, depth
+    queue = Deque{Tuple{NaceState,Vector,Int}}() # state, action list, depth
+    push!(queue, [(state, [], 0)])
     encountered = Dict()
     best_score = Inf32
     best_actions = []
