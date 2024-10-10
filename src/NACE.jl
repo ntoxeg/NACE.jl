@@ -222,21 +222,14 @@ function hypothesize(state::NaceState)
     perceived_externals = state.perceived_externals
     previous_externals = state.per_ext_ante
 
-    # Initialize containers for new rules and evidence
+    # Generate new hypotheses
+    new_rules = new_hypotheses(perceived_externals, previous_externals, state.act_ante)
+
+    # Initialize containers for rule evidence
     rule_evidence = Dict()
-    new_rules = Set{Rule}()
-    new_negrules = Set{Rule}()
+    new_negrules = Set()
 
-    # Identify changes in the environment
-    for (key, value) in perceived_externals
-        if haskey(previous_externals, key) && previous_externals[key] != value
-            # Generate potential rules for observed changes
-            potential_rule = generate_rule(key, previous_externals[key], value, state.act_ante)
-            push!(new_rules, potential_rule)
-        end
-    end
-
-    # Evaluate and update rules
+    # Update rule evidences
     for rule in new_rules
         if is_valid_rule(rule, state.rules)
             rule_evidence[rule] = true
@@ -245,8 +238,37 @@ function hypothesize(state::NaceState)
         end
     end
 
+    # Filter rules
+    filtered_rules = filter_rules(new_rules, rule_evidence)
+
     # Return updated focus, rule evidence, new rules, and negative rules
-    return focus, rule_evidence, new_rules, new_negrules
+    return focus, rule_evidence, filtered_rules, new_negrules
+end
+
+function new_hypotheses(perceived_externals, previous_externals, action)
+    new_rules = Set()
+    for (key, value) in perceived_externals
+        if haskey(previous_externals, key) && previous_externals[key] != value
+            potential_rule = generate_rule(key, previous_externals[key], value, action)
+            push!(new_rules, potential_rule)
+        end
+    end
+    return new_rules
+end
+
+function filter_rules(new_rules, rule_evidence)
+    filtered_rules = Set()
+    for rule in new_rules
+        if rule_evidence[rule] && !conflicting_rule_exists(rule, new_rules)
+            push!(filtered_rules, rule)
+        end
+    end
+    return filtered_rules
+end
+
+function conflicting_rule_exists(rule, rules)
+    # Logic to check for conflicting rules
+    return false
 end
 
 function generate_rule(key, old_value, new_value, action)
