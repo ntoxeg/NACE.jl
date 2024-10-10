@@ -423,60 +423,33 @@ function best_hypothesis() end
 Plan and choose best actions to take. (TODO: clarify / explain)
 """
 function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, custom_goal)
-    queue = Queue{Tuple{NaceState,Vector,Int}}() # state, action list, depth
-    enqueue!(queue, (state, [], 0))
-
-    encountered_at = Dict()
-    best_score = Inf32
+    # Initialize variables
     best_actions = []
+    best_score = Inf32
     best_action_combination_for_revisit = []
     oldest_age = 0.0f0
 
-    while !isempty(queue)
-        if length(queue) > max_queue_len
-            println("Planning queue bound enforced!")
-            break
-        end
-        current_state, planned_actions, depth = dequeue!(queue)  # Dequeue
-        if depth > max_depth  # If maximum depth is reached, stop searching
-            continue
-        end
-        world_BOARD_VALUES = state.perceived_externals[:VALUES][1] # TODO: figure this out FIXME
-        # println(world_BOARD_VALUES) TODO: remove debug prints
-        # println(encountered_at)
-        # println(depth)
-        if depth >= get(encountered_at, world_BOARD_VALUES, Inf)
-            continue
-        else
-            encountered_at[world_BOARD_VALUES] = depth
-        end
-        for action ∈ actions
-            new_world, new_score, new_age, _ = predict(state, 7, 7)
-            if new_world == current_state || new_score == Inf32
-                continue
-            end
-            new_planned_actions = [planned_actions; action]
-            if new_score < best_score ||
-               (new_score == best_score && size(new_planned_actions) < size(best_actions))
-                best_actions = new_planned_actions
-                best_score = new_score
-            end
-            if new_age > oldest_age || (new_age == oldest_age &&
-                size(new_planned_actions) < size(best_action_combination_for_revisit))
-                best_action_combination_for_revisit = new_planned_actions
-                oldest_age = new_age
-            end
-            if new_score == 1.0
-                enqueue!(queue, (state, new_planned_actions, depth + 1))  # Enqueue children FIXME new_world
-            end
-            if new_score == -Inf32
-                queue = Queue{Tuple{NaceState,Vector,Int}}()
-                break
-            end
-        end
+    # 1. Search for argmax V(s) > 0
+    best_actions, best_score = bfs_with_predictor(state, actions, max_depth, max_queue_len, :argmax)
+    if !isempty(best_actions)
+        return best_actions, best_score, best_action_combination_for_revisit, oldest_age
     end
 
-    best_actions, best_score, best_action_combination_for_revisit, oldest_age
+    # 2. Search for argmin S(s) < 1
+    best_actions, best_score = bfs_with_predictor(state, actions, max_depth, max_queue_len, :argmin)
+    if !isempty(best_actions)
+        return best_actions, best_score, best_action_combination_for_revisit, oldest_age
+    end
+
+    # 3. Random action
+    random_action = [rand(actions)]
+    return random_action, best_score, best_action_combination_for_revisit, oldest_age
+end
+
+function bfs_with_predictor(state::NaceState, actions, max_depth::Int, max_queue_len::Int, mode::Symbol)
+    # Stub for BFS logic
+    # mode can be :argmax or :argmin
+    return [], Inf32
 end
 
 function highest_reward() end
