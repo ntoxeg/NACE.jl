@@ -447,9 +447,39 @@ function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, cus
 end
 
 function bfs_with_predictor(state::NaceState, actions, max_depth::Int, max_queue_len::Int, mode::Symbol)
-    # Stub for BFS logic
-    # mode can be :argmax or :argmin
-    return [], Inf32
+    queue = Queue{Tuple{NaceState, Vector{String}, Int}}()
+    enqueue!(queue, (state, [], 0))
+    best_actions = []
+    best_score = mode == :argmax ? -Inf32 : Inf32
+
+    while !isempty(queue)
+        current_state, action_sequence, depth = dequeue!(queue)
+
+        if depth > max_depth
+            continue
+        end
+
+        predicted_state, score, age, _ = predict(current_state, 7, 7)
+
+        if (mode == :argmax && score > 0) || (mode == :argmin && score < 1)
+            if (mode == :argmax && score > best_score) || (mode == :argmin && score < best_score)
+                best_actions = action_sequence
+                best_score = score
+            end
+        end
+
+        for action in actions
+            new_state = deepcopy(predicted_state)
+            new_action_sequence = vcat(action_sequence, [action])
+            enqueue!(queue, (new_state, new_action_sequence, depth + 1))
+        end
+
+        if length(queue) > max_queue_len
+            break
+        end
+    end
+
+    return best_actions, best_score
 end
 
 function highest_reward() end
