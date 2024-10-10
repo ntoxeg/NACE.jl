@@ -4,7 +4,19 @@ struct Condition
     expr::String
 end
 
-Base.show(io::IO, rule::Rule) = print(io, "Rule(Precondition: $(rule.precondition.expr), Consequence: $(rule.consequence), Score: $(rule.score))")
+function Base.show(io::IO, rule::Rule)
+    precondition = replace(rule.precondition.expr, r"VALUES\s*==\s*\[(.*?)\]" => s -> "VALUES ==\n" * format_2d_array(s.match[1]))
+    precondition = replace(precondition, r"BOARD\s*==\s*\[(.*?)\]" => s -> "BOARD ==\n" * format_2d_array(s.match[1]))
+    consequence = replace(rule.consequence, r"VALUES\s*=\s*\[(.*?)\]" => s -> "VALUES =\n" * format_2d_array(s.match[1]))
+    consequence = replace(consequence, r"BOARD\s*=\s*\[(.*?)\]" => s -> "BOARD =\n" * format_2d_array(s.match[1]))
+    print(io, "Rule(Precondition: $precondition, Consequence: $consequence, Score: $(rule.score))")
+end
+
+function format_2d_array(s::AbstractString)
+    rows = split(s, ";")
+    formatted_rows = map(row -> join(split(strip(row)), " "), rows)
+    return join(formatted_rows, "\n")
+end
 
 Base.show(io::IO, cond::Condition) = print(io, "Condition(Expression: $(cond.expr))")
 
