@@ -5,10 +5,10 @@ struct Condition
 end
 
 function Base.show(io::IO, rule::Rule)
-    precondition = replace(rule.precondition.expr, r"VALUES\s*==\s*\[(.*?)\]" => s -> "VALUES ==\n" * format_2d_array(s.captures[1]))
-    precondition = replace(precondition, r"BOARD\s*==\s*\[(.*?)\]" => s -> "BOARD ==\n" * format_2d_array(s.captures[1]))
-    consequence = replace(rule.consequence, r"VALUES\s*=\s*\[(.*?)\]" => s -> "VALUES =\n" * format_2d_array(s.captures[1]))
-    consequence = replace(consequence, r"BOARD\s*=\s*\[(.*?)\]" => s -> "BOARD =\n" * format_2d_array(s.captures[1]))
+    precondition = replace(rule.precondition.expr, r"VALUES\s*==\s*\[(.*?)\]" => s -> "VALUES ==\n" * format_2d_array(s.match))
+    precondition = replace(precondition, r"BOARD\s*==\s*\[(.*?)\]" => s -> "BOARD ==\n" * format_2d_array(s.match))
+    consequence = replace(rule.consequence, r"VALUES\s*=\s*\[(.*?)\]" => s -> "VALUES =\n" * format_2d_array(s.match))
+    consequence = replace(consequence, r"BOARD\s*=\s*\[(.*?)\]" => s -> "BOARD =\n" * format_2d_array(s.match))
     print(io, "Rule(Precondition: $precondition, Consequence: $consequence, Score: $(rule.score))")
 end
 
