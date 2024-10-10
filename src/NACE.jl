@@ -430,7 +430,15 @@ function bfs_with_predictor(state::NaceState, actions, max_depth::Int, max_queue
             continue
         end
 
-        predicted_state, score, age, _ = predict(current_state, 7, 7)
+        per_ext_post, score, age, _ = predict(current_state, 7, 7)
+        predicted_state = NaceState(
+            current_state.t + 1,
+            current_state.focus,
+            per_ext_post,
+            current_state.perceived_externals,
+            current_state.act_ante,
+            current_state.rules
+        )
 
         if (mode == :argmax && score > 0) || (mode == :argmin && score < 1)
             if (mode == :argmax && score > best_score) || (mode == :argmin && score < best_score)
