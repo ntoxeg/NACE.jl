@@ -217,12 +217,46 @@ end
 TBW
 """
 function hypothesize(state::NaceState)
+    # Extract current focus and perceived externals
     focus = state.focus
-    rule_evidence = Dict()
-    new_rules = state.rules
-    new_negrules = state.rules
+    perceived_externals = state.perceived_externals
+    previous_externals = state.per_ext_ante
 
-    focus, rule_evidence, new_rules, new_negrules
+    # Initialize containers for new rules and evidence
+    rule_evidence = Dict()
+    new_rules = Set{Rule}()
+    new_negrules = Set{Rule}()
+
+    # Identify changes in the environment
+    for (key, value) in perceived_externals
+        if haskey(previous_externals, key) && previous_externals[key] != value
+            # Generate potential rules for observed changes
+            potential_rule = generate_rule(key, previous_externals[key], value, state.act_ante)
+            push!(new_rules, potential_rule)
+        end
+    end
+
+    # Evaluate and update rules
+    for rule in new_rules
+        if is_valid_rule(rule, state.rules)
+            rule_evidence[rule] = true
+        else
+            push!(new_negrules, rule)
+        end
+    end
+
+    # Return updated focus, rule evidence, new rules, and negative rules
+    return focus, rule_evidence, new_rules, new_negrules
+end
+
+function generate_rule(key, old_value, new_value, action)
+    # Logic to generate a rule based on observed change
+    return Rule(Condition("$key == $old_value"), "$key = $new_value", 0.0, 0.0)
+end
+
+function is_valid_rule(rule, existing_rules)
+    # Logic to validate a rule against existing rules
+    return true
 end
 
 function prediction_errors() end
