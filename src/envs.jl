@@ -1,5 +1,4 @@
 export AbstractEnv, EnvParams, BuiltinEnv, register_env, make, render
-include("world.jl")
 
 abstract type AbstractEnv end
 

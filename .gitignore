@@ -32,3 +32,6 @@ poetry.lock
 
 # VSCode settings
 .vscode/
+.aider*
+
+.envrc
