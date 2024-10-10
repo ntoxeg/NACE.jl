@@ -494,45 +494,28 @@ Perform a single agent cycle.
 An agent cycle consists of running all the previously defined logic to produce
 information necessary to update its state and select the next action to take for one timestep.
 """
-function cycle(state::NaceState)#::Tuple{Set,String} FIXME
-    # prediction L 116
-    # predict for the rest of the plan L 130
-    # moved from below
-
-    custom_goal = nothing
-    rules = state.rules
-    rules_exclude = Set()
-    # next obs needed (L 109)
-    # we need observation diff as well
-    # diff state.perceived_externals vs state.per_ext_ante
+function cycle(state::NaceState)
+    # Predict the next state
     new_world, new_score, new_age, _ = predict(state, 7, 7)
 
+    # Hypothesize new rules
     focus, rule_evidence, new_rules, new_negrules = hypothesize(state)
-    # add "excluded" rules back TODO
-    fav_actions, airis_score, fav_actions_revisit, oldest_age =
-        plan(state, keys(ACTION_TO_IDX), 100, 2000, custom_goal)
-    # mode selection & babbling
-    # modes: EXPLORE, BABBLE, ACHIEVE, CURIOUS
 
-    # post-block effects: next action && plan determined.
-    # action enaction, break here
+    # Plan the next actions
+    fav_actions, _, _, _ = plan(state, keys(ACTION_TO_IDX), 100, 2000, nothing)
 
-    action = isempty(fav_actions) ? IDX_TO_ACTION[rand(0:7-1)] : fav_actions[begin] # TODO: proper impl
-    lastplanworld = new_world
-    per_ext_post = state.perceived_externals # FIXME
-    behavior = nothing
+    # Determine the next action
+    action = isempty(fav_actions) ? IDX_TO_ACTION[rand(0:7-1)] : fav_actions[1]
 
-    focus,
-    new_rules,
-    action,
-    rule_evidence,
-    new_rules,
-    new_negrules,
-    lastplanworld,
-    per_ext_post,
-    values,
-    behavior,
-    plan
+    # Return the updated state
+    return NaceState(
+        state.t + 1,
+        focus,
+        new_world,
+        state.perceived_externals,
+        action,
+        union(state.rules, new_rules)
+    )
 end
 
 end # module
