@@ -1,5 +1,5 @@
 module NACE
-export make_random_policy, run_example, run_example_random
+export make_random_policy, run_example_random, NaceAgent, init_state, nace_effector, nace_perceptor, nace_policy
 
 using DataStructures
 using PyCall
@@ -91,7 +91,7 @@ end
 
 Create an empty state with time step zero.
 """
-init_state() = NaceState(0, Set(), Dict(), Dict(), "", Set())
+init_state() = NaceState(0, Set(), Dict(), Dict(), "Unused", Set())
 
 """
     NaceAgent(state, policy, perceptor, effector)
@@ -138,8 +138,8 @@ function (agent::NaceAgent)(obs)
         agent.state.act_ante,
         agent.state.rules,
     )
-    agent.state = agent.policy(agent.state)
-    agent.effector(agent.state.act_ante)
+    agent.state = cycle(agent.state)
+    agent.effector(agent.policy(agent.state))
 end
 
 """
@@ -167,15 +167,7 @@ end
 Run the policy.
 """
 function nace_policy(state)
-    focus, rules, action, _... = cycle(state)
-    NaceState(
-        state.t + 1,
-        focus,
-        state.perceived_externals,
-        state.perceived_externals,
-        action,
-        rules,
-    )
+    state.act_ante
 end
 
 """
@@ -190,26 +182,7 @@ function nace_effector(action)
     ACTION_TO_IDX[action]
 end
 
-"""
-    run_example(env)
 
-Run an example on an environment.
-"""
-function run_example(env)
-    obs, info = env.reset()
-    agent = NaceAgent(
-        NaceState(0, Set(), Dict(), Dict(), "Unused", Set()),
-        nace_policy,
-        nace_perceptor,
-        nace_effector,
-    )
-    for _ ∈ 1:10
-        action = agent(obs)
-        println("Action: $(IDX_TO_ACTION[action])")
-        obs, info = env.step(action)
-        println("Info: $info")
-    end
-end
 
 """
     hypothesize(state::NaceState)
@@ -494,7 +467,7 @@ Perform a single agent cycle.
 An agent cycle consists of running all the previously defined logic to produce
 information necessary to update its state and select the next action to take for one timestep.
 """
-function cycle(state::NaceState)
+function cycle(state::NaceState)::NaceState
     # Predict the next state
     new_world, new_score, new_age, _ = predict(state, 7, 7)
 
