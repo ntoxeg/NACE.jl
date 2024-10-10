@@ -292,22 +292,20 @@ function verify_hypothesis() end
 
 Apply rules to predict the future world state. (TODO: explain more)
 """
-function predict(state::NaceState, grid_width::Int, grid_height::Int)  # TODO: move grid size args somewhere else
+function predict(state::NaceState, grid_width::Int, grid_height::Int)
     per_ext_post = deepcopy(state.per_ext_ante)
     used_rules_sumscore = 0.0f0
     used_rules_amount = 0
-    position_scores::Dict{Tuple{Int,Int}}, highest_highscore::Float32 =
-        filter_hypotheses(grid_width, grid_height, state)
+    position_scores, highest_highscore = filter_hypotheses(grid_width, grid_height, state)
     age = 0
     max_focus = maximum(identity, state.focus; init=0)
 
-    for (x, y) ∈ keys(position_scores)
+    for (x, y) in keys(position_scores)
         scores, highscore, rule = position_scores[(x, y)]
 
-        if applicable(highscore, highest_highscore, rule) # FIXME: scores needed?
-            per_ext_post[:BOARD][(x, y)] = rule.consequence # FIXME: rule[2][3] # what is all this
-            per_ext_post[:VALUES] = (rule.acc_score, rule.v_inventory) # rule[2][4]
-            used_rules_sumscore += rule.score # get(scores, rule, 0.0)
+        if applicable(state_value(state), rule_ratio(Cell(x, y, Set()), rule))
+            per_ext_post[:BOARD][(x, y)] = rule.consequence
+            used_rules_sumscore += rule.score
             used_rules_amount += 1
         end
 
@@ -317,20 +315,20 @@ function predict(state::NaceState, grid_width::Int, grid_height::Int)  # TODO: m
             age = max((state.t - per_ext_post[:TIMES][(x, y)]), age)
         end
     end
-    score = used_rules_amount > 0 ? used_rules_sumscore / used_rules_amount : 1.0 # AIRIS confidence
+
+    score = used_rules_amount > 0 ? used_rules_sumscore / used_rules_amount : 1.0
+
     if !isempty(per_ext_post[:VALUES])
-        # but if the certaintly predicted world has higher value, then set prediction score to the best it can be
-        if per_ext_post[:VALUES][begin] == 1 && score == 1.0 # || (customGoal && customGoal(per_ext_post))
+        if per_ext_post[:VALUES][begin] == 1 && score == 1.0
             score = -Inf32
-        end
-        # while if the certaintly predicted world has lower value, set prediction score to the worst it can be
-        if per_ext_post[:VALUES][begin] == -1 && score == 1.0
+        elseif per_ext_post[:VALUES][begin] == -1 && score == 1.0
             score = Inf32
         end
     else
         score = Inf32
     end
-    per_ext_post, score, age, per_ext_post[:VALUES]
+
+    return per_ext_post, score, age, per_ext_post[:VALUES]
 end
 
 """
