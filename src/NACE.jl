@@ -292,7 +292,7 @@ function verify_hypothesis() end
 
 Apply rules to predict the future world state. (TODO: explain more)
 """
-function predict(state::NaceState, grid_width::Int, grid_height::Int)  # TODO: move gird size args somewhere else
+function predict(state::NaceState, grid_width::Int, grid_height::Int)  # TODO: move grid size args somewhere else
     per_ext_post = deepcopy(state.per_ext_ante)
     used_rules_sumscore = 0.0f0
     used_rules_amount = 0
