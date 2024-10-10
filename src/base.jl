@@ -4,6 +4,10 @@ struct Condition
     expr::String
 end
 
+Base.show(io::IO, rule::Rule) = print(io, "Rule(Precondition: $(rule.precondition.expr), Consequence: $(rule.consequence), Score: $(rule.score))")
+
+Base.show(io::IO, cond::Condition) = print(io, "Condition(Expression: $(cond.expr))")
+
 struct Rule
     precondition::Condition
     consequence::String
