@@ -71,7 +71,8 @@ struct Cell
 end
 
 struct State
-    cells::Set{Cell}
+    grid::Array{Int, 2}
+    inventory::Array{Int, 1}
     rules::Set{Rule}
 end
 
