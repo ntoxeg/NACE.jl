@@ -1,5 +1,6 @@
 module NACE
-export make_random_policy, run_example_random, NaceAgent, init_state, nace_effector, nace_perceptor, nace_policy
+export make_random_policy,
+    run_example_random, NaceAgent, init_state, nace_effector, nace_perceptor, nace_policy
 
 using DataStructures
 using PyCall
@@ -182,8 +183,6 @@ function nace_effector(action)
     ACTION_TO_IDX[action]
 end
 
-
-
 """
     hypothesize(state::NaceState)
 
@@ -203,7 +202,7 @@ function hypothesize(state::NaceState)
     new_negrules = Set()
 
     # Update rule evidences
-    for rule in new_rules
+    for rule ∈ new_rules
         if is_valid_rule(rule, state.rules)
             rule_evidence[rule] = true
         else
@@ -220,7 +219,7 @@ end
 
 function new_hypotheses(perceived_externals, previous_externals, action)
     new_rules = Set()
-    for (key, value) in perceived_externals
+    for (key, value) ∈ perceived_externals
         if haskey(previous_externals, key) && previous_externals[key] != value
             potential_rule = generate_rule(key, previous_externals[key], value, action)
             push!(new_rules, potential_rule)
@@ -231,7 +230,7 @@ end
 
 function filter_rules(new_rules, rule_evidence)
     filtered_rules = Set()
-    for rule in new_rules
+    for rule ∈ new_rules
         if rule_evidence[rule] && !conflicting_rule_exists(rule, new_rules)
             push!(filtered_rules, rule)
         end
@@ -273,7 +272,7 @@ function predict(state::NaceState, grid_width::Int, grid_height::Int)
     age = 0
     max_focus = maximum(identity, state.focus; init=0)
 
-    for (x, y) in keys(position_scores)
+    for (x, y) ∈ keys(position_scores)
         scores, highscore, rule = position_scores[(x, y)]
 
         if applicable(state_value(state), rule_ratio(Cell(x, y, Set()), rule))
@@ -401,13 +400,15 @@ function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, cus
     oldest_age = 0.0f0
 
     # 1. Search for argmax V(s) > 0
-    best_actions, best_score = bfs_with_predictor(state, actions, max_depth, max_queue_len, :argmax)
+    best_actions, best_score =
+        bfs_with_predictor(state, actions, max_depth, max_queue_len, :argmax)
     if !isempty(best_actions)
         return best_actions, best_score, best_action_combination_for_revisit, oldest_age
     end
 
     # 2. Search for argmin S(s) < 1
-    best_actions, best_score = bfs_with_predictor(state, actions, max_depth, max_queue_len, :argmin)
+    best_actions, best_score =
+        bfs_with_predictor(state, actions, max_depth, max_queue_len, :argmin)
     if !isempty(best_actions)
         return best_actions, best_score, best_action_combination_for_revisit, oldest_age
     end
@@ -417,8 +418,14 @@ function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, cus
     return random_action, best_score, best_action_combination_for_revisit, oldest_age
 end
 
-function bfs_with_predictor(state::NaceState, actions, max_depth::Int, max_queue_len::Int, mode::Symbol)
-    queue = Queue{Tuple{NaceState, Vector{String}, Int}}()
+function bfs_with_predictor(
+    state::NaceState,
+    actions,
+    max_depth::Int,
+    max_queue_len::Int,
+    mode::Symbol,
+)
+    queue = Queue{Tuple{NaceState,Vector{String},Int}}()
     enqueue!(queue, (state, [], 0))
     best_actions = []
     best_score = mode == :argmax ? -Inf32 : Inf32
@@ -437,17 +444,18 @@ function bfs_with_predictor(state::NaceState, actions, max_depth::Int, max_queue
             per_ext_post,
             current_state.perceived_externals,
             current_state.act_ante,
-            current_state.rules
+            current_state.rules,
         )
 
         if (mode == :argmax && score > 0) || (mode == :argmin && score < 1)
-            if (mode == :argmax && score > best_score) || (mode == :argmin && score < best_score)
+            if (mode == :argmax && score > best_score) ||
+               (mode == :argmin && score < best_score)
                 best_actions = action_sequence
                 best_score = score
             end
         end
 
-        for action in actions
+        for action ∈ actions
             new_state = deepcopy(predicted_state)
             new_action_sequence = vcat(action_sequence, [action])
             enqueue!(queue, (new_state, new_action_sequence, depth + 1))
@@ -495,7 +503,7 @@ function cycle(state::NaceState)::NaceState
         new_world,
         state.perceived_externals,
         action,
-        union(state.rules, new_rules)
+        union(state.rules, new_rules),
     )
 end
 

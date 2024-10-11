@@ -35,16 +35,20 @@ function format_rule_comp(key::AbstractString, comp::AbstractString)
     if key == "VALUES"
         convert_row_int(row) = map(el -> parse(Int32, String(el)), row)
         array_rows = map(row -> convert_row_int(row), array_rows)
+        prefix = "$key = \n"
     end
     if key == "BOARD"
         convert_row_str(row) = map(el -> replace(el, "\"" => ""), row)
         array_rows = map(row -> convert_row_str(row), array_rows)
+        prefix = "$key = \n"
     end
     if key == "DIR"
-        array_rows = [parse(Int32, String(array_rows[1]))]
+        convert_dir(row) = map(el -> parse(Int32, String(el)), row)
+        array_rows = map(row -> convert_dir(row), array_rows)
+        prefix = "$key = "
     end
-    data = length(array_rows) > 1 ? stack(array_rows) : array_rows[1]
-    "$key = \n$(repr("text/plain", data))"
+    data = length(array_rows) > 1 ? stack(array_rows) : array_rows[1][1]
+    prefix * repr("text/plain", data)
 end
 
 function format_2d_array(s::AbstractString)
