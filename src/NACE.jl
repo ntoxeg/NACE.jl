@@ -253,12 +253,6 @@ function is_valid_rule(rule, existing_rules)
     return true
 end
 
-function prediction_errors() end
-
-function new_hypotheses() end
-
-function verify_hypothesis() end
-
 """
     predict(state::NaceState, grid_width::Int, grid_height::Int)
 
@@ -383,9 +377,6 @@ function filter_hypotheses(width::Int, height::Int, state::NaceState)
     position_scores, highest_highscore
 end
 
-function max_truth_exp() end
-
-function best_hypothesis() end
 
 """
     plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, custom_goal)
@@ -469,11 +460,7 @@ function bfs_with_predictor(
     return best_actions, best_score
 end
 
-function highest_reward() end
 
-function weakest_hypothesis() end
-
-function oldest_observed() end
 
 """
     cycle(state::NaceState)
