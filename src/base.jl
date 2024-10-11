@@ -16,11 +16,11 @@ end
 function Base.show(io::IO, rule::Rule)
     precondition =
         replace(rule.precondition.expr, r"VALUES\s*==\s*\[(.*?)\]" => s"VALUES =\n\1")
-    precondition = replace(precondition, r"DIR\s*==\s*\[(.*?)\]" => s"DIR =\n\1")
+    precondition = replace(precondition, r"DIR\s*==\s*(\d+)" => s"DIR =\n\1")
     precondition =
         format_2d_array(replace(precondition, r"BOARD\s*==\s*\[(.*?)\]" => s"BOARD =\n\1"))
     consequence = replace(rule.consequence, r"VALUES\s*=\s*\[(.*?)\]" => s"VALUES =\n\1")
-    consequence = replace(consequence, r"DIR\s*=\s*\[(.*?)\]" => s"DIR =\n\1")
+    consequence = replace(consequence, r"DIR\s*=\s*(\d+)" => s"DIR =\n\1")
     consequence =
         format_2d_array(replace(consequence, r"BOARD\s*=\s*\[(.*?)\]" => s"BOARD =\n\1"))
     print(
