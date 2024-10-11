@@ -12,7 +12,7 @@ end
 
 # TODO: refactor into those files
 include("base.jl")
-include("envs.jl")
+include("env.jl")
 include("agent.jl")
 
 # example of running in the REPL
