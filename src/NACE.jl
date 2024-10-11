@@ -97,7 +97,7 @@ init_state() = NaceState(0, Set(), Dict(), Dict(), "Unused", Set())
 """
     NaceAgent(state, policy, perceptor, effector)
 
-Non-Axiomatic Causal Explorer agent.
+Non-Axiomatic Causal Explorer agent
 
 Holds the top-level structure of the agent.
 This is what you need to instantiate in order to run NACE.
@@ -121,7 +121,7 @@ end
 """
     (agent::NaceAgent)(obs)
 
-Run a step.
+Run a step
 
 Run the complete pipeline from perceiving from the environment observation to
 determining the next action to take.
@@ -146,7 +146,7 @@ end
 """
     nace_perceptor(obs)
 
-Run the perceptor.
+Run the perceptor
 
 Run the perceptor -- the function that consumes an environment observation
 data structure and returns a representation usable within the agent's internal
@@ -165,7 +165,7 @@ end
 """
     nace_policy(state)
 
-Run the policy.
+Run the policy
 """
 function nace_policy(state)
     state.act_ante
@@ -174,13 +174,20 @@ end
 """
     nace_effector(action)
 
-Run the effector.
+Run the effector
 
 Run the effector -- the function that takes an action as input and returns its representation
 usable with the environment's API.
 """
 function nace_effector(action)
     ACTION_TO_IDX[action]
+end
+
+"""
+Process an observation
+"""
+function observe(state::NaceState)
+
 end
 
 """
@@ -239,17 +246,17 @@ function filter_rules(new_rules, rule_evidence)
 end
 
 function conflicting_rule_exists(rule, rules)
-    # Logic to check for conflicting rules
+    # TODO Logic to check for conflicting rules
     return false
 end
 
 function generate_rule(key, old_value, new_value, action)
-    # Logic to generate a rule based on observed change
+    # TODO Logic to generate a rule based on observed change
     return Rule(Condition("$key == $old_value"), "$key = $new_value", 0.0, 0.0)
 end
 
 function is_valid_rule(rule, existing_rules)
-    # Logic to validate a rule against existing rules
+    # TODO Logic to validate a rule against existing rules
     return true
 end
 
@@ -300,7 +307,7 @@ end
 """
     filter_hypotheses(width::Int, height::Int, state::NaceState)
 
-Filter hypotheses down to ones with high enough quality. (TODO: clarify)
+Filter hypotheses down to ones with high enough quality (TODO: clarify)
 """
 function filter_hypotheses(width::Int, height::Int, state::NaceState)
     attend_positions = Set{Tuple{Int,Int}}()
@@ -376,7 +383,6 @@ function filter_hypotheses(width::Int, height::Int, state::NaceState)
 
     position_scores, highest_highscore
 end
-
 
 """
     plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, custom_goal)
@@ -460,12 +466,10 @@ function bfs_with_predictor(
     return best_actions, best_score
 end
 
-
-
 """
     cycle(state::NaceState)
 
-Perform a single agent cycle.
+Perform a single agent cycle
 
 An agent cycle consists of running all the previously defined logic to produce
 information necessary to update its state and select the next action to take for one timestep.
