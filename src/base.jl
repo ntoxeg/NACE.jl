@@ -4,25 +4,6 @@ struct Condition
     expr::String
 end
 
-function Base.show(io::IO, rule::Rule)
-    precondition = replace(rule.precondition.expr, r"VALUES\s*==\s*\[(.*?)\]" => s"VALUES ==\n(\1)")
-    format_2d_array
-    precondition = replace(precondition, r"BOARD\s*==\s*\[(.*?)\]" => s"BOARD ==\n(\1)")
-    format_2d_array
-    consequence = replace(rule.consequence, r"VALUES\s*=\s*\[(.*?)\]" => s"VALUES =\n(\1)")
-    format_2d_array
-    consequence = replace(consequence, r"BOARD\s*=\s*\[(.*?)\]" => s"BOARD =\n(\1)")
-    print(io, "Rule(Precondition: $precondition, Consequence: $consequence, Score: $(rule.score))")
-end
-
-function format_2d_array(s::AbstractString)
-    rows = split(s, ";")
-    formatted_rows = map(row -> join(split(strip(row)), " "), rows)
-    return join(formatted_rows, "\n")
-end
-
-Base.show(io::IO, cond::Condition) = print(io, "Condition(Expression: $(cond.expr))")
-
 struct Rule
     precondition::Condition
     consequence::String
@@ -31,6 +12,53 @@ struct Rule
     # v_inventory
     # TODO: determine Rule structure
 end
+
+function Base.show(io::IO, rule::Rule)
+    precondition =
+        replace(rule.precondition.expr, r"VALUES\s*==\s*\[(.*?)\]" => s"VALUES =\n\1")
+    precondition = replace(precondition, r"DIR\s*==\s*\[(.*?)\]" => s"DIR =\n\1")
+    precondition =
+        format_2d_array(replace(precondition, r"BOARD\s*==\s*\[(.*?)\]" => s"BOARD =\n\1"))
+    consequence = replace(rule.consequence, r"VALUES\s*=\s*\[(.*?)\]" => s"VALUES =\n\1")
+    consequence = replace(consequence, r"DIR\s*=\s*\[(.*?)\]" => s"DIR =\n\1")
+    consequence =
+        format_2d_array(replace(consequence, r"BOARD\s*=\s*\[(.*?)\]" => s"BOARD =\n\1"))
+    print(
+        io,
+        "Rule[\nPrecondition:\n$precondition,\n\nConsequence:\n$consequence,\nScore: $(rule.score)\n]",
+    )
+end
+
+function format_rule_comp(key::AbstractString, comp::AbstractString)
+    rows = split(comp, ";")
+    array_rows = map(row -> split(strip(row)), rows)
+    if key == "VALUES"
+        convert_row_int(row) = map(el -> parse(Int32, String(el)), row)
+        array_rows = map(row -> convert_row_int(row), array_rows)
+    end
+    if key == "BOARD"
+        convert_row_str(row) = map(el -> replace(el, "\"" => ""), row)
+        array_rows = map(row -> convert_row_str(row), array_rows)
+    end
+    if key == "DIR"
+        array_rows = [parse(Int32, String(array_rows[1]))]
+    end
+    data = length(array_rows) > 1 ? stack(array_rows) : array_rows[1]
+    "$key = \n$(repr("text/plain", data))"
+end
+
+function format_2d_array(s::AbstractString)
+    comps = split(s, "=")
+    fmtstr = format_rule_comp(strip(comps[1]), comps[2])
+    if length(comps) == 4
+        fmtstr2 = format_rule_comp(strip(comps[3]), comps[4])
+        return fmtstr, fmtstr2
+    else
+        return fmtstr
+    end
+end
+
+Base.show(io::IO, cond::Condition) = print(io, "Condition(Expression: $(cond.expr))")
 
 struct Cell
     x::Int

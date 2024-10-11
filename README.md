@@ -6,7 +6,7 @@
 ## TODO
 - [ ] Make experiment no. 2 run.
     - [ ] `hypothesize` and other unimplemented functions need to reflect the original logic flow diagram. Multiple functionalities condensed in the current functions need to be split out into those functions.
-        - [ ] `hypothesize`
+        - [ ] `hypothesize` (edit count: 1)
         - [ ] `prediction_errors`
         - [ ] `new_hypotheses`
         - [ ] `verify_hypothesis`
