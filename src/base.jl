@@ -4,6 +4,38 @@ struct Condition
     expr::String
 end
 
+function update_rule_evidence(rules, M_change, M_observation_mismatched)
+    for rule in rules
+        if {c1, c2, c3} ⊆ M_change
+            rule.w_plus += 1
+        end
+        if c3 ∈ M_prediction_mismatched
+            rule.w_minus += 1
+        end
+    end
+end
+
+function choose_rules(rules)
+    # Implement logic to choose rules based on w_plus and w_minus
+    # Ensure f_exp(r) is calculated and used
+end
+
+function update_bird_view(previous_state, perceived_array)
+    # Update the bird view map based on the perceived array
+    # Implement logic to update the state
+end
+
+function calculate_sets(previous_state, current_state)
+    M_change = Set()
+    M_observation_mismatched = Set()
+    M_prediction_mismatched = Set()
+
+    # Implement logic to populate the sets based on the formulas
+    # M_change, M_observation_mismatched, M_prediction_mismatched
+
+    return M_change, M_observation_mismatched, M_prediction_mismatched
+end
+
 struct Rule
     precondition::Condition
     consequence::String

@@ -420,7 +420,7 @@ function bfs_with_predictor(
     actions,
     max_depth::Int,
     max_queue_len::Int,
-    mode::Symbol,
+    mode::Symbol
 )
     queue = Queue{Tuple{NaceState,Vector{String},Int}}()
     enqueue!(queue, (state, [], 0))
@@ -435,6 +435,8 @@ function bfs_with_predictor(
         end
 
         per_ext_post, score, age, _ = predict(current_state, 7, 7)
+        # Implement logic to apply rules with Q(r, c) = 1 and maximum f_exp(r)
+        # Ensure the predicted state is constructed correctly
         predicted_state = NaceState(
             current_state.t + 1,
             current_state.focus,
