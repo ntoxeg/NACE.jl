@@ -89,17 +89,13 @@ OBJECT_TO_IDX = Dict(
     "box" => 7,
     "goal" => 8,
     "lava" => 9,
-    "agent" => 10
+    "agent" => 10,
 )
 
-IDX_TO_OBJECT = Dict(value => key for (key, value) in OBJECT_TO_IDX)
+IDX_TO_OBJECT = Dict(value => key for (key, value) ∈ OBJECT_TO_IDX)
 
 # Map of state names to integers
-STATE_TO_IDX = Dict(
-    "open" => 0,
-    "closed" => 1,
-    "locked" => 2
-)
+STATE_TO_IDX = Dict("open" => 0, "closed" => 1, "locked" => 2)
 
 # Map of agent direction indices to vectors
 DIR_TO_VEC = [
@@ -110,7 +106,19 @@ DIR_TO_VEC = [
     # Pointing left (negative X)
     [-1, 0],
     # Up (negative Y)
-    [0, -1]
+    [0, -1],
 ]
 
-
+"""
+Actions available in minigrid environments
+"""
+IDX_TO_ACTION = Dict(
+    0 => "Turn left",
+    1 => "Turn right",
+    2 => "Move forward",
+    3 => "Unused",
+    4 => "Unused",
+    5 => "Unused",
+    6 => "Unused",
+)
+ACTION_TO_IDX = Dict(value => key for (key, value) ∈ IDX_TO_ACTION)

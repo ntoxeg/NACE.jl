@@ -1,16 +1,86 @@
-export Rule, applicable, Cell, State, rule_ratio, cell_value, state_value
+export Rule, applicable, Cell, State, rule_ratio, cell_value, state_value, truthexp
 
-struct Condition
+struct Precondition
     expr::String
+    cell1
+    cell2
+    agent_state
+    action
 end
 
-function update_rule_evidence(rules, M_change, M_observation_mismatched)
-    for rule in rules
-        if {c1, c2, c3} ⊆ M_change
-            rule.w_plus += 1
+struct Consequence
+    cell
+    agent_state
+    reward
+end
+
+struct Rule
+    precondition::Precondition
+    consequence::Consequence
+    evidence_pos::Int32
+    evidence_neg::Int32
+    score::Float32
+    acc_score::Float32
+end
+
+"""
+    NaceState(t, focus, perceived_externals, per_ext_ante, act_ante, rules)
+
+Agent state structure
+
+# Arguments
+
+  - `t` :: Int: Current time step.
+  - `focus` :: Set: Set of objects the agent is currently focused on.
+  - `perceived_externals` :: Dict: Perceived external state, including objects, walls, and agents.
+  - `per_ext_ante` :: Dict: Previous perceived external state from the previous time step.
+  - `act_ante` :: String: Action taken in the previous time step.
+  - `rules` :: Set: Set of rules that the agent is currently believes.
+"""
+struct NaceState
+    t::Int
+    focus::Set
+    perceived_externals::Dict
+    per_ext_ante::Dict
+    act_ante::String
+    rules::Set
+end
+
+function truthexp_with(cfun::Function, r::Rule)::AbstractFloat
+    w = r.evidence_neg + r.evidence_pos
+    f = r.evidence_pos / w
+    c = cfun(w)
+    f * c + 0.5 * (1 - c)
+end
+
+confidence_count(w) = w / (w + 1)
+
+truthexp = Base.Fix1(truthexp_with, confidence_count)
+
+rule_active(r::Rule)::Bool = r.evidence_pos >= r.evidence_neg
+
+struct RuleMemory
+    indeterminate_rules::Set{Rule}
+    active_rules::Set{Rule}
+    inactive_rules::Set{Rule}
+
+    function RuleMemory(rules::Set{Rule})
+        new(rules, Set{Rule}(), Set{Rule}())
+    end
+end
+
+function update_rule_evidence(rulem::RuleMemory, Δmemory, obs_mismatch, pred_mismatch)
+    rules = rulem.indeterminate_rules ∪ rulem.active_rules ∪ rulem.inactive_rules
+    m = Δmemory ∪ obs_mismatch
+    for rule ∈ rules
+        c1 = rule.precondition.cell1
+        c2 = rule.precondition.cell2
+        c3 = rule.consequence.cell
+        if {c1, c2, c3} ⊆ m
+            rule.evidence_pos += 1
         end
-        if c3 ∈ M_prediction_mismatched
-            rule.w_minus += 1
+        if c3 ∈ pred_mismatch
+            rule.evidence_neg += 1
         end
     end
 end
@@ -34,15 +104,6 @@ function calculate_sets(previous_state, current_state)
     # M_change, M_observation_mismatched, M_prediction_mismatched
 
     return M_change, M_observation_mismatched, M_prediction_mismatched
-end
-
-struct Rule
-    precondition::Condition
-    consequence::String
-    score::Float32
-    acc_score::Float32
-    # v_inventory
-    # TODO: determine Rule structure
 end
 
 function Base.show(io::IO, rule::Rule)
@@ -94,22 +155,22 @@ function format_2d_array(s::AbstractString)
     end
 end
 
-Base.show(io::IO, cond::Condition) = print(io, "Condition(Expression: $(cond.expr))")
+Base.show(io::IO, cond::Precondition) = print(io, "Condition(Expression: $(cond.expr))")
 
 struct Cell
     x::Int
     y::Int
-    conds::Set{Condition}
+    conds::Set{Precondition}
 end
 
 struct State
-    grid::Array{Int, 2}
-    inventory::Array{Int, 1}
+    grid::Array{Int,2}
+    inventory::Array{Int,1}
     rules::Set{Rule}
 end
 
 # TODO: determine Condition structure
-function cond_match(cond1::Condition, cond2::Condition)
+function cond_match(cond1::Precondition, cond2::Precondition)
     cond1.expr == cond2.expr
 end
 

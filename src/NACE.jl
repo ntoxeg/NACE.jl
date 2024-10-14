@@ -10,7 +10,6 @@ function __init__()
     global miniwrap = pyimport("minigrid.wrappers")
 end
 
-# TODO: refactor into those files
 include("base.jl")
 include("env.jl")
 include("agent.jl")
@@ -18,20 +17,6 @@ include("agent.jl")
 # example of running in the REPL
 # env = NACE.gym.make("MiniGrid-LavaCrossingS11N5-v0", render_mode="human");
 # obs, info = env.reset();
-
-"""
-Actions available in minigrid environments
-"""
-IDX_TO_ACTION = Dict(
-    0 => "Turn left",
-    1 => "Turn right",
-    2 => "Move forward",
-    3 => "Unused",
-    4 => "Unused",
-    5 => "Unused",
-    6 => "Unused",
-)
-ACTION_TO_IDX = Dict(value => key for (key, value) ∈ IDX_TO_ACTION)
 
 """
     make_random_policy(env)
@@ -65,58 +50,11 @@ function run_example_random(env)
 end
 
 """
-    NaceState(t, focus, perceived_externals, per_ext_ante, act_ante, rules)
-
-Agent state structure
-
-# Arguments
-
-  - `t` :: Int: Current time step.
-  - `focus` :: Set: Set of objects the agent is currently focused on.
-  - `perceived_externals` :: Dict: Perceived external state, including objects, walls, and agents.
-  - `per_ext_ante` :: Dict: Previous perceived external state from the previous time step.
-  - `act_ante` :: String: Action taken in the previous time step.
-  - `rules` :: Set: Set of rules that the agent is currently believes.
-"""
-struct NaceState
-    t::Int
-    focus::Set
-    perceived_externals::Dict
-    per_ext_ante::Dict
-    act_ante::String
-    rules::Set
-end
-
-"""
     init_state()
 
 Create an empty state with time step zero.
 """
 init_state() = NaceState(0, Set(), Dict(), Dict(), "Unused", Set())
-
-"""
-    NaceAgent(state, policy, perceptor, effector)
-
-Non-Axiomatic Causal Explorer agent
-
-Holds the top-level structure of the agent.
-This is what you need to instantiate in order to run NACE.
-
-# Arguments
-
-  - `state` :: NaceState: Current state of the agent.
-  - `policy` :: Function: Policy function that generates an action based on the current state.
-  - `perceptor` :: Function: Perceptor function that generates perceived external state based on the
-    received environment observation.
-  - `effector` :: Function: Effector function that takes an action as input and returns data usable
-    for executing the action via the environment's API.
-"""
-mutable struct NaceAgent
-    state::NaceState
-    policy::Function
-    perceptor::Function
-    effector::Function
-end
 
 """
     (agent::NaceAgent)(obs)
@@ -186,9 +124,7 @@ end
 """
 Process an observation
 """
-function observe(state::NaceState)
-
-end
+function observe(state::NaceState) end
 
 """
     hypothesize(state::NaceState)
@@ -252,7 +188,7 @@ end
 
 function generate_rule(key, old_value, new_value, action)
     # TODO Logic to generate a rule based on observed change
-    return Rule(Condition("$key == $old_value"), "$key = $new_value", 0.0, 0.0)
+    return Rule(Precondition("$key == $old_value"), "$key = $new_value", 0.0, 0.0)
 end
 
 function is_valid_rule(rule, existing_rules)
@@ -420,7 +356,7 @@ function bfs_with_predictor(
     actions,
     max_depth::Int,
     max_queue_len::Int,
-    mode::Symbol
+    mode::Symbol,
 )
     queue = Queue{Tuple{NaceState,Vector{String},Int}}()
     enqueue!(queue, (state, [], 0))
