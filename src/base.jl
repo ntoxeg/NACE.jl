@@ -69,17 +69,17 @@ struct RuleMemory
     end
 end
 
-function update_rule_evidence(rulem::RuleMemory, Δmemory, obs_mismatch, pred_mismatch)
+function update_rule_evidence(rulem::RuleMemory, M_change, M_observation_mismatched, M_prediction_mismatched)
     rules = rulem.indeterminate_rules ∪ rulem.active_rules ∪ rulem.inactive_rules
-    m = Δmemory ∪ obs_mismatch
+    m = M_change ∪ M_observation_mismatched
     for rule ∈ rules
         c1 = rule.precondition.cell1
         c2 = rule.precondition.cell2
         c3 = rule.consequence.cell
-        if {c1, c2, c3} ⊆ m
+        if Set([c1, c2, c3]) ⊆ m
             rule.evidence_pos += 1
         end
-        if c3 ∈ pred_mismatch
+        if c3 ∈ M_prediction_mismatched
             rule.evidence_neg += 1
         end
     end
@@ -87,7 +87,7 @@ end
 
 function choose_rules(rules)
     # Implement logic to choose rules based on w_plus and w_minus
-    # Ensure f_exp(r) is calculated and used
+    # Ensure truthexp(r) is calculated and used
 end
 
 function update_bird_view(previous_state, perceived_array)

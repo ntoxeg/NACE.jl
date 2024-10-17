@@ -182,17 +182,26 @@ function filter_rules(new_rules, rule_evidence)
 end
 
 function conflicting_rule_exists(rule, rules)
-    # TODO Logic to check for conflicting rules
+    for existing_rule in rules
+        if existing_rule.precondition == rule.precondition && existing_rule.consequence != rule.consequence
+            return true
+        end
+    end
     return false
 end
 
 function generate_rule(key, old_value, new_value, action)
-    # TODO Logic to generate a rule based on observed change
-    return Rule(Precondition("$key == $old_value"), "$key = $new_value", 0.0, 0.0)
+    precondition = Precondition("$key == $old_value")
+    consequence = "$key = $new_value"
+    return Rule(precondition, consequence, 0.0, 0.0)
 end
 
 function is_valid_rule(rule, existing_rules)
-    # TODO Logic to validate a rule against existing rules
+    for existing_rule in existing_rules
+        if existing_rule.precondition == rule.precondition && existing_rule.consequence == rule.consequence
+            return false
+        end
+    end
     return true
 end
 
@@ -371,7 +380,7 @@ function bfs_with_predictor(
         end
 
         per_ext_post, score, age, _ = predict(current_state, 7, 7)
-        # Implement logic to apply rules with Q(r, c) = 1 and maximum f_exp(r)
+        # Implement logic to apply rules with Q(r, c) = 1 and maximum truthexp(r)
         # Ensure the predicted state is constructed correctly
         predicted_state = NaceState(
             current_state.t + 1,
