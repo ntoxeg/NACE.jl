@@ -191,9 +191,27 @@ function conflicting_rule_exists(rule, rules)
 end
 
 function generate_rule(key, old_value, new_value, action)
-    precondition = Precondition("$key == $old_value", nothing, nothing, nothing, action)
-    consequence = "$key = $new_value"
-    return Rule(precondition, consequence, 0.0, 0.0)
+    # Define or obtain the values for cell1, cell2, agent_state, and cell
+    cell1 = get_cell1_value()
+    cell2 = get_cell2_value()
+    agent_state = get_agent_state()
+    cell = get_cell_value()
+    reward = get_reward_value()
+
+    # Create Precondition with appropriate values
+    precondition = Precondition("$key == $old_value", cell1, cell2, agent_state, action)
+
+    # Create Consequence with appropriate values
+    consequence = Consequence(cell, agent_state, reward)
+
+    # Initialize evidence and scores
+    evidence_pos = Int32(0)
+    evidence_neg = Int32(0)
+    score = 0.0f0
+    acc_score = 0.0f0
+
+    # Return Rule with all required arguments
+    return Rule(precondition, consequence, evidence_pos, evidence_neg, score, acc_score)
 end
 
 function is_valid_rule(rule, existing_rules)
