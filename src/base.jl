@@ -23,7 +23,7 @@ struct Rule
 end
 
 """
-    NaceState(t, focus, perceived_externals, per_ext_ante, act_ante, rules)
+    NaceState(t, focus, perceived_externals, per_ext_ante, act_ante, rules, values)
 
 Agent state structure
 
@@ -42,7 +42,8 @@ struct NaceState
     perceived_externals::Dict
     per_ext_ante::Dict
     act_ante::String
-    rules::Set
+    rules::Set{Rule}
+    values::Vector
 end
 
 function truthexp_with(cfun::Function, r::Rule)::AbstractFloat
@@ -164,13 +165,7 @@ Base.show(io::IO, cond::Precondition) = print(io, "Condition(Expression: $(cond.
 struct Cell
     x::Int
     y::Int
-    conds::Set{Precondition}
-end
-
-struct State
-    grid::Array{Int,2}
-    inventory::Array{Int,1}
-    rules::Set{Rule}
+    item
 end
 
 # TODO: determine Condition structure
@@ -205,8 +200,8 @@ Calculate the match value of a state.
 
 The state match value is the maximum match value of all cells in the state.
 """
-function state_value(s::State)
-    max(map(c -> cell_value(s.rules, c), s.cells))
+function state_value(s::NaceState)
+    max(map(c -> cell_value(s.rules, c), s.perceived_externals[:BOARD]))
 end
 
 """

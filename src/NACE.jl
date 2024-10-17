@@ -54,7 +54,7 @@ end
 
 Create an empty state with time step zero.
 """
-init_state() = NaceState(0, Set(), Dict(), Dict(), "Unused", Set())
+init_state() = NaceState(0, Set(), Dict(), Dict(), "Unused", Set(), [])
 
 """
     (agent::NaceAgent)(obs)
@@ -67,6 +67,7 @@ Returns the chosen action, does not have side-effects except for updating the ag
 """
 function (agent::NaceAgent)(obs)
     percept_state = agent.perceptor(obs)
+    values = map(obj -> obj == "goal" ? 1 : (obj == "lava" ? -1 : 0), percept_state[:BOARD])
     per_ext_ante =
         isempty(agent.state.per_ext_ante) ? percept_state : agent.state.per_ext_ante
     agent.state = NaceState(
@@ -76,6 +77,7 @@ function (agent::NaceAgent)(obs)
         per_ext_ante,
         agent.state.act_ante,
         agent.state.rules,
+        values,
     )
     agent.state = cycle(agent.state)
     agent.effector(agent.policy(agent.state))
@@ -92,12 +94,11 @@ logic.
 """
 function nace_perceptor(obs)
     objects = map(i -> IDX_TO_OBJECT[i], obs["image"][:, :, 1])
-    Dict(
-        :DIR => obs["direction"],
-        :BOARD => objects,
-        :VALUES => map(obj -> obj == "goal" ? 1 : (obj == "lava" ? -1 : 0), objects), # FIXME
-        :TASK => obs["mission"],
+    objects = reshape(
+        [Cell(Tuple(idx)[1], Tuple(idx)[2], objects[idx]) for idx ∈ eachindex(objects)],
+        size(objects),
     )
+    Dict(:DIR => obs["direction"], :BOARD => objects, :TASK => obs["mission"])
 end
 
 """
@@ -132,14 +133,11 @@ function observe(state::NaceState) end
 TBW
 """
 function hypothesize(state::NaceState)
-    # Extract current focus and perceived externals
-    focus = state.focus
-    perceived_externals = state.perceived_externals
-    previous_externals = state.per_ext_ante
-
-    # Generate new hypotheses
-    new_rules = new_hypotheses(perceived_externals, previous_externals, state.act_ante)
-
+    new_rules = Set()
+    for c ∈ state.focus
+        # Generate new hypotheses
+        new_rules = union(new_rules, new_hypotheses(state, c))
+    end
     # Initialize containers for rule evidence
     rule_evidence = Dict()
     new_negrules = Set()
@@ -157,14 +155,30 @@ function hypothesize(state::NaceState)
     filtered_rules = filter_rules(new_rules, rule_evidence)
 
     # Return updated focus, rule evidence, new rules, and negative rules
-    return focus, rule_evidence, filtered_rules, new_negrules
+    return state.focus, rule_evidence, filtered_rules, new_negrules
 end
 
-function new_hypotheses(perceived_externals, previous_externals, action)
+"""
+    new_hypotheses(agent_state::NaceState, perceived_externals, previous_externals, action, c3)
+
+# Arguments
+
+  - c3: the cell to be used for the consequence.
+"""
+function new_hypotheses(agent_state::NaceState, c3)
+    percv_ext = agent_state.perceived_externals
+    previous_externals = agent_state.per_ext_ante
+    action = agent_state.act_ante
     new_rules = Set()
-    for (key, value) ∈ perceived_externals
-        if haskey(previous_externals, key) && previous_externals[key] != value
-            potential_rule = generate_rule(key, previous_externals[key], value, action)
+
+    board_ante = previous_externals[:BOARD]
+    board = percv_ext[:BOARD]
+    for pos1 ∈ zip(1:size(board), 1:size(board))
+        for pos2 ∈ zip(1:size(board), 1:size(board))
+            param_name = :BOARD
+            c1 = board_ante[param_name][pos1]  # one precondition cell
+            c2 = board_ante[param_name][pos2]  # another precondition cell
+            potential_rule = generate_rule(agent_state, param_name, c1, c2, c3, action)
             push!(new_rules, potential_rule)
         end
     end
@@ -198,16 +212,16 @@ Generate a new rule
 
 # Arguments
 
-  - `param_name` :: String: The name of the perceived state parameter (`BOARD`, `VALUES`, `DIR`).
+  - `param_name` :: Symbol: The name of the perceived state parameter (`BOARD`, `VALUES`, `DIR`).
 """
-function generate_rule(agent_state::NaceState, param_name::String, pos1, pos2, pos3, action)
+function generate_rule(agent_state::NaceState, param_name::Symbol, pos1, pos2, pos3, action)
     # Define or obtain the values for cell1, cell2, agent_state, and cell
     percv_ext = agent_state.per_ext_ante
-    board = percv_ext["BOARD"]
+    board = percv_ext[:BOARD]
     cell1 = board[pos1]
     cell2 = board[pos2]
     cell3 = board[pos3]
-    reward = percv_ext["REWARD"]
+    reward = percv_ext[:REWARD]
 
     # Create Precondition with appropriate values
     precondition = Precondition(cell1, cell2, agent_state, action)
@@ -248,43 +262,37 @@ function predict(state::NaceState, grid_width::Int, grid_height::Int)
     age = 0
     max_focus = maximum(identity, state.focus; init=0)
 
-    for (x, y) ∈ keys(position_scores)
-        scores, highscore, rule = position_scores[(x, y)]
+    for rule ∈ state.rules
+        for (x, y) ∈ keys(position_scores)
+            cell = state.perceived_externals[:BOARD][(x, y)]
+            scores, highscore, rule = position_scores[(x, y)]
 
-        if applicable(state_value(state), rule_ratio(Cell(x, y, Set()), rule))
-            per_ext_post[:BOARD][(x, y)] = rule.consequence
-            used_rules_sumscore += rule.score
-            used_rules_amount += 1
-        end
-
-        if max_focus &&
-           per_ext_post[:BOARD][(x, y)] in state.focus &&
-           per_ext_post[:BOARD][(x, y)] == max_focus
-            age = max((state.t - per_ext_post[:TIMES][(x, y)]), age)
+            if applicable(state_value(state), rule_ratio(cell, rule))
+                per_ext_post[:BOARD][(x, y)] = rule.consequence.cell.item
+            end
         end
     end
 
-    score = used_rules_amount > 0 ? used_rules_sumscore / used_rules_amount : 1.0
+    # if !isempty(state.values)
+    #     if state.values[begin] == 1 && score == 1.0
+    #         score = -Inf32
+    #     elseif state.values[begin] == -1 && score == 1.0
+    #         score = Inf32
+    #     end
+    # else
+    #     score = Inf32
+    # end
 
-    if !isempty(per_ext_post[:VALUES])
-        if per_ext_post[:VALUES][begin] == 1 && score == 1.0
-            score = -Inf32
-        elseif per_ext_post[:VALUES][begin] == -1 && score == 1.0
-            score = Inf32
-        end
-    else
-        score = Inf32
-    end
-
-    return per_ext_post, score, age, per_ext_post[:VALUES]
+    return per_ext_post
 end
 
 """
     filter_hypotheses(width::Int, height::Int, state::NaceState)
 
-Filter hypotheses down to ones with high enough quality (TODO: clarify)
+Filter hypotheses down to ones with high enough quality
 """
-function filter_hypotheses(width::Int, height::Int, state::NaceState)
+function filter_hypotheses(state::NaceState)
+    width, height = size(state.perceived_externals[:BOARD])
     attend_positions = Set{Tuple{Int,Int}}()
     position_scores = Dict{Tuple{Int,Int},Any}()
     highest_highscore = 0.0f0
@@ -294,8 +302,7 @@ function filter_hypotheses(width::Int, height::Int, state::NaceState)
             if state.per_ext_ante[:BOARD][x, y] in state.focus
                 push!(attend_positions, (x, y))
                 for rule ∈ state.rules
-                    precondition, consequence = rule
-                    action_score_and_preconditions = collect(precondition)
+                    action_score_and_preconditions = collect(rule.precondition)
                     for (x_rel, y_rel, required_state) ∈
                         action_score_and_preconditions[3:end]
                         push!(attend_positions, (x + x_rel, y + y_rel))
@@ -453,16 +460,16 @@ information necessary to update its state and select the next action to take for
 """
 function cycle(state::NaceState)::NaceState
     # Predict the next state
-    new_world, new_score, new_age, _ = predict(state, 7, 7)
+    new_world = predict(state, 7, 7)
 
     # Hypothesize new rules
     focus, rule_evidence, new_rules, new_negrules = hypothesize(state)
 
     # Plan the next actions
-    fav_actions, _, _, _ = plan(state, keys(ACTION_TO_IDX), 100, 2000, nothing)
+    planned_actions = plan(state, keys(ACTION_TO_IDX), 100, 2000, nothing)
 
     # Determine the next action
-    action = isempty(fav_actions) ? IDX_TO_ACTION[rand(0:7-1)] : fav_actions[1]
+    action = isempty(planned_actions) ? IDX_TO_ACTION[rand(0:7-1)] : planned_actions[1]
 
     # Return the updated state
     return NaceState(
@@ -472,6 +479,7 @@ function cycle(state::NaceState)::NaceState
         state.perceived_externals,
         action,
         union(state.rules, new_rules),
+        state.values,
     )
 end
 
