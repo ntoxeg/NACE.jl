@@ -191,7 +191,7 @@ function conflicting_rule_exists(rule, rules)
 end
 
 function generate_rule(key, old_value, new_value, action)
-    precondition = Precondition("$key == $old_value")
+    precondition = Precondition("$key == $old_value", nothing, nothing, nothing, action)
     consequence = "$key = $new_value"
     return Rule(precondition, consequence, 0.0, 0.0)
 end
