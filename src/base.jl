@@ -1,7 +1,6 @@
 export Rule, applicable, Cell, State, rule_ratio, cell_value, state_value, truthexp
 
 struct Precondition
-    expr::String
     cell1
     cell2
     agent_state
@@ -69,7 +68,12 @@ struct RuleMemory
     end
 end
 
-function update_rule_evidence(rulem::RuleMemory, M_change, M_observation_mismatched, M_prediction_mismatched)
+function update_rule_evidence(
+    rulem::RuleMemory,
+    M_change,
+    M_observation_mismatched,
+    M_prediction_mismatched,
+)
     rules = rulem.indeterminate_rules ∪ rulem.active_rules ∪ rulem.inactive_rules
     m = M_change ∪ M_observation_mismatched
     for rule ∈ rules

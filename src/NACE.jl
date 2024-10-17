@@ -182,27 +182,38 @@ function filter_rules(new_rules, rule_evidence)
 end
 
 function conflicting_rule_exists(rule, rules)
-    for existing_rule in rules
-        if existing_rule.precondition == rule.precondition && existing_rule.consequence != rule.consequence
+    for existing_rule ∈ rules
+        if existing_rule.precondition == rule.precondition &&
+           existing_rule.consequence != rule.consequence
             return true
         end
     end
     return false
 end
 
-function generate_rule(key, old_value, new_value, action)
+"""
+    generate_rule(param_name, old_value, new_value, action)
+
+Generate a new rule
+
+# Arguments
+
+  - `param_name` :: String: The name of the perceived state parameter (`BOARD`, `VALUES`, `DIR`).
+"""
+function generate_rule(agent_state::NaceState, param_name::String, pos1, pos2, pos3, action)
     # Define or obtain the values for cell1, cell2, agent_state, and cell
-    cell1 = get_cell1_value()
-    cell2 = get_cell2_value()
-    agent_state = get_agent_state()
-    cell = get_cell_value()
-    reward = get_reward_value()
+    percv_ext = agent_state.per_ext_ante
+    board = percv_ext["BOARD"]
+    cell1 = board[pos1]
+    cell2 = board[pos2]
+    cell3 = board[pos3]
+    reward = percv_ext["REWARD"]
 
     # Create Precondition with appropriate values
-    precondition = Precondition("$key == $old_value", cell1, cell2, agent_state, action)
+    precondition = Precondition(cell1, cell2, agent_state, action)
 
     # Create Consequence with appropriate values
-    consequence = Consequence(cell, agent_state, reward)
+    consequence = Consequence(cell3, agent_state, reward)
 
     # Initialize evidence and scores
     evidence_pos = Int32(0)
@@ -215,8 +226,9 @@ function generate_rule(key, old_value, new_value, action)
 end
 
 function is_valid_rule(rule, existing_rules)
-    for existing_rule in existing_rules
-        if existing_rule.precondition == rule.precondition && existing_rule.consequence == rule.consequence
+    for existing_rule ∈ existing_rules
+        if existing_rule.precondition == rule.precondition &&
+           existing_rule.consequence == rule.consequence
             return false
         end
     end
