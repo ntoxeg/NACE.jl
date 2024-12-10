@@ -5,8 +5,8 @@ using Test
     env = NACE.gym.make("MiniGrid-LavaCrossingS11N5-v0", render_mode="human")
 
     """
-        Actions available in minigrid environments
-        """
+    Actions available in minigrid environments
+    """
     IDX_TO_ACTION = Dict(
         0 => "Turn left",
         1 => "Turn right",
@@ -19,10 +19,10 @@ using Test
     ACTION_TO_IDX = Dict(value => key for (key, value) ∈ IDX_TO_ACTION)
 
     """
-            run_example(env)
+        run_example(env)
 
-        Run an example on an environment.
-        """
+    Run an example on an environment.
+    """
     function run_example(env)
         obs, info = env.reset()
         agent = NaceAgent(init_state(), nace_policy, nace_perceptor, nace_effector)

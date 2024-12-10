@@ -20,7 +20,7 @@ REGISTERED_ENVIRONMENTS::Dict{String,Type} = Dict()
 
 Add an environment to the global registry
 """
-function register_env(name::String, envT::Type{E}) where E<:AbstractEnv
+function register_env(name::String, envT::Type{E}) where {E<:AbstractEnv}
     REGISTERED_ENVIRONMENTS[name] = envT
 end
 

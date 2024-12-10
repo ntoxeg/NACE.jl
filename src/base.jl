@@ -1,16 +1,16 @@
 export Rule, applicable, Cell, State, rule_ratio, cell_value, state_value, truthexp
 
 struct Precondition
-    cell1
-    cell2
-    agent_state
-    action
+    cell1::Any
+    cell2::Any
+    agent_state::Any
+    action::Any
 end
 
 struct Consequence
-    cell
-    agent_state
-    reward
+    cell::Any
+    agent_state::Any
+    reward::Any
 end
 
 struct Rule
@@ -43,7 +43,7 @@ struct NaceState
     per_ext_ante::Dict
     act_ante::String
     rules::Set{Rule}
-    values::Vector
+    values::Vector{Int}
 end
 
 function truthexp_with(cfun::Function, r::Rule)::AbstractFloat
@@ -90,9 +90,22 @@ function update_rule_evidence(
     end
 end
 
-function choose_rules(rules)
-    # Implement logic to choose rules based on w_plus and w_minus
-    # Ensure truthexp(r) is calculated and used
+function choose_rules(rules::Set{Rule})
+    chosen_rules = Set{Rule}()
+
+    # Get the best rules according to different criteria
+    best_truth = max_truth_exp(rules)
+    best_evidence = best_hypothesis(rules)
+    best_reward = highest_reward(rules)
+
+    # Add the best rules if they exist and are active
+    for rule ∈ [best_truth, best_evidence, best_reward]
+        if !isnothing(rule) && rule_active(rule)
+            push!(chosen_rules, rule)
+        end
+    end
+
+    chosen_rules
 end
 
 function update_bird_view(previous_state, perceived_array)
@@ -100,13 +113,42 @@ function update_bird_view(previous_state, perceived_array)
     # Implement logic to update the state
 end
 
-function calculate_sets(previous_state, current_state)
-    M_change = Set()
-    M_observation_mismatched = Set()
-    M_prediction_mismatched = Set()
+function calculate_sets(previous_state::NaceState, current_state::NaceState)
+    M_change = Set{Cell}()
+    M_observation_mismatched = Set{Cell}()
+    M_prediction_mismatched = Set{Cell}()
 
-    # Implement logic to populate the sets based on the formulas
-    # M_change, M_observation_mismatched, M_prediction_mismatched
+    prev_board = previous_state.perceived_externals[:BOARD]
+    curr_board = current_state.perceived_externals[:BOARD]
+
+    # Calculate changes between states
+    for i ∈ 1:size(prev_board, 1), j ∈ 1:size(prev_board, 2)
+        prev_cell = prev_board[i, j]
+        curr_cell = curr_board[i, j]
+
+        if prev_cell.item != curr_cell.item
+            push!(M_change, curr_cell)
+        end
+    end
+
+    # Calculate prediction mismatches
+    predicted_board =
+        predict(previous_state, size(prev_board, 1), size(prev_board, 2))[:BOARD]
+    for i ∈ 1:size(curr_board, 1), j ∈ 1:size(curr_board, 2)
+        pred_cell = predicted_board[i, j]
+        curr_cell = curr_board[i, j]
+
+        if pred_cell.item != curr_cell.item
+            push!(M_prediction_mismatched, curr_cell)
+        end
+    end
+
+    # Calculate observation mismatches
+    for cell ∈ M_change
+        if cell in M_prediction_mismatched
+            push!(M_observation_mismatched, cell)
+        end
+    end
 
     return M_change, M_observation_mismatched, M_prediction_mismatched
 end
@@ -165,7 +207,7 @@ Base.show(io::IO, cond::Precondition) = print(io, "Condition(Expression: $(cond.
 struct Cell
     x::Int
     y::Int
-    item
+    item::Any
 end
 
 # TODO: determine Condition structure
@@ -211,4 +253,97 @@ Determine whether a rule is applicable based on its match ratio relative to the 
 """
 function applicable(sv::Float64, rr::Float64)::Bool
     rr > 0.0 && rr == sv
+end
+
+"""
+    max_truth_exp(rules::Set{Rule})
+
+Find the rule with the maximum truth expectation.
+"""
+function max_truth_exp(rules::Set{Rule})
+    isempty(rules) && return nothing
+    max_rule = nothing
+    max_exp = -Inf32
+    for rule ∈ rules
+        exp = truthexp(rule)
+        if exp > max_exp
+            max_exp = exp
+            max_rule = rule
+        end
+    end
+    max_rule
+end
+
+"""
+    best_hypothesis(rules::Set{Rule})
+
+Find the hypothesis with the highest positive evidence.
+"""
+function best_hypothesis(rules::Set{Rule})
+    isempty(rules) && return nothing
+    max_rule = nothing
+    max_evidence = -Inf32
+    for rule ∈ rules
+        if rule.evidence_pos > max_evidence
+            max_evidence = rule.evidence_pos
+            max_rule = rule
+        end
+    end
+    max_rule
+end
+
+"""
+    highest_reward(rules::Set{Rule})
+
+Find the rule that leads to the highest reward.
+"""
+function highest_reward(rules::Set{Rule})
+    isempty(rules) && return nothing
+    max_rule = nothing
+    max_reward = -Inf32
+    for rule ∈ rules
+        if rule.consequence.reward > max_reward
+            max_reward = rule.consequence.reward
+            max_rule = rule
+        end
+    end
+    max_rule
+end
+
+"""
+    weakest_hypothesis(rules::Set{Rule})
+
+Find the hypothesis with the lowest evidence support.
+"""
+function weakest_hypothesis(rules::Set{Rule})
+    isempty(rules) && return nothing
+    min_rule = nothing
+    min_evidence = Inf32
+    for rule ∈ rules
+        total_evidence = rule.evidence_pos + rule.evidence_neg
+        if total_evidence < min_evidence
+            min_evidence = total_evidence
+            min_rule = rule
+        end
+    end
+    min_rule
+end
+
+"""
+    oldest_observed(rules::Set{Rule}, max_age::Int)
+
+Find the oldest rule that hasn't been observed recently.
+"""
+function oldest_observed(rules::Set{Rule}, max_age::Int)
+    isempty(rules) && return nothing
+    oldest_rule = nothing
+    max_age_found = -1
+    for rule ∈ rules
+        # Use accumulated score as a proxy for age
+        if rule.acc_score > max_age_found
+            max_age_found = rule.acc_score
+            oldest_rule = rule
+        end
+    end
+    oldest_rule
 end

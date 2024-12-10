@@ -54,7 +54,7 @@ end
 
 Create an empty state with time step zero.
 """
-init_state() = NaceState(0, Set(), Dict(), Dict(), "Unused", Set(), [])
+init_state() = NaceState(0, Set(), Dict(), Dict(), "Unused", Set{Rule}(), Vector{Int}())
 
 """
     (agent::NaceAgent)(obs)
@@ -67,7 +67,7 @@ Returns the chosen action, does not have side-effects except for updating the ag
 """
 function (agent::NaceAgent)(obs)
     percept_state = agent.perceptor(obs)
-    values = map(obj -> obj == "goal" ? 1 : (obj == "lava" ? -1 : 0), percept_state[:BOARD])
+    values = percept_state[:VALUES]
     per_ext_ante =
         isempty(agent.state.per_ext_ante) ? percept_state : agent.state.per_ext_ante
     agent.state = NaceState(
@@ -95,10 +95,16 @@ logic.
 function nace_perceptor(obs)
     objects = map(i -> IDX_TO_OBJECT[i], obs["image"][:, :, 1])
     objects = reshape(
-        [Cell(Tuple(idx)[1], Tuple(idx)[2], objects[idx]) for idx ∈ eachindex(objects)],
+        [Cell(idx[1], idx[2], objects[idx]) for idx ∈ CartesianIndices(objects)],
         size(objects),
     )
-    Dict(:DIR => obs["direction"], :BOARD => objects, :TASK => obs["mission"])
+    values = map(obj -> obj == "goal" ? 1 : (obj == "lava" ? -1 : 0), vec(objects))
+    Dict(
+        :DIR => obs["direction"],
+        :BOARD => objects,
+        :TASK => obs["mission"],
+        :VALUES => values,
+    )
 end
 
 """
@@ -173,11 +179,13 @@ function new_hypotheses(agent_state::NaceState, c3)
 
     board_ante = previous_externals[:BOARD]
     board = percv_ext[:BOARD]
-    for pos1 ∈ zip(1:size(board), 1:size(board))
-        for pos2 ∈ zip(1:size(board), 1:size(board))
+    height, width = size(board)
+
+    for i ∈ 1:height, j ∈ 1:width
+        for k ∈ 1:height, l ∈ 1:width
             param_name = :BOARD
-            c1 = board_ante[param_name][pos1]  # one precondition cell
-            c2 = board_ante[param_name][pos2]  # another precondition cell
+            c1 = board_ante[i, j]  # one precondition cell
+            c2 = board_ante[k, l]  # another precondition cell
             potential_rule = generate_rule(agent_state, param_name, c1, c2, c3, action)
             push!(new_rules, potential_rule)
         end
@@ -214,20 +222,19 @@ Generate a new rule
 
   - `param_name` :: Symbol: The name of the perceived state parameter (`BOARD`, `VALUES`, `DIR`).
 """
-function generate_rule(agent_state::NaceState, param_name::Symbol, pos1, pos2, pos3, action)
-    # Define or obtain the values for cell1, cell2, agent_state, and cell
-    percv_ext = agent_state.per_ext_ante
-    board = percv_ext[:BOARD]
-    cell1 = board[pos1]
-    cell2 = board[pos2]
-    cell3 = board[pos3]
-    reward = percv_ext[:REWARD]
-
+function generate_rule(
+    agent_state::NaceState,
+    param_name::Symbol,
+    cell1::Cell,
+    cell2::Cell,
+    cell3,
+    action,
+)
     # Create Precondition with appropriate values
     precondition = Precondition(cell1, cell2, agent_state, action)
 
     # Create Consequence with appropriate values
-    consequence = Consequence(cell3, agent_state, reward)
+    consequence = Consequence(Cell(cell1.x, cell1.y, cell3), agent_state, 0)  # Initialize reward as 0
 
     # Initialize evidence and scores
     evidence_pos = Int32(0)
@@ -258,30 +265,52 @@ function predict(state::NaceState, grid_width::Int, grid_height::Int)
     per_ext_post = deepcopy(state.per_ext_ante)
     used_rules_sumscore = 0.0f0
     used_rules_amount = 0
-    position_scores, highest_highscore = filter_hypotheses(grid_width, grid_height, state)
-    age = 0
-    max_focus = maximum(identity, state.focus; init=0)
 
-    for rule ∈ state.rules
-        for (x, y) ∈ keys(position_scores)
-            cell = state.perceived_externals[:BOARD][(x, y)]
-            scores, highscore, rule = position_scores[(x, y)]
+    # Get the best rules for prediction
+    best_rules = choose_rules(state.rules)
+    position_scores = Dict{Tuple{Int,Int},Any}()
+    highest_highscore = 0.0f0
 
-            if applicable(state_value(state), rule_ratio(cell, rule))
-                per_ext_post[:BOARD][(x, y)] = rule.consequence.cell.item
+    # Calculate scores for each position
+    for x ∈ 1:grid_width, y ∈ 1:grid_height
+        cell = state.perceived_externals[:BOARD][x, y]
+        scores = Dict{Rule,Float32}()
+        highscore = 0.0f0
+        highscore_rule = nothing
+
+        for rule ∈ best_rules
+            # Calculate rule applicability score
+            score = rule_ratio(cell, rule)
+            if score > 0.0f0
+                scores[rule] = score
+                if score > highscore
+                    highscore = score
+                    highscore_rule = rule
+                end
             end
+        end
+
+        position_scores[(x, y)] = (scores, highscore, highscore_rule)
+        highest_highscore = max(highest_highscore, highscore)
+    end
+
+    # Apply the best rules to predict the next state
+    for (pos, (scores, highscore, rule)) ∈ position_scores
+        if !isnothing(rule) && applicable(state_value(state), scores[rule])
+            x, y = pos
+            per_ext_post[:BOARD][x, y] = rule.consequence.cell.item
+            used_rules_sumscore += rule.score
+            used_rules_amount += 1
         end
     end
 
-    # if !isempty(state.values)
-    #     if state.values[begin] == 1 && score == 1.0
-    #         score = -Inf32
-    #     elseif state.values[begin] == -1 && score == 1.0
-    #         score = Inf32
-    #     end
-    # else
-    #     score = Inf32
-    # end
+    # Update rule scores based on usage
+    if used_rules_amount > 0
+        avg_score = used_rules_sumscore / used_rules_amount
+        for rule ∈ best_rules
+            rule.acc_score += avg_score
+        end
+    end
 
     return per_ext_post
 end
@@ -374,27 +403,40 @@ Plan and choose best actions to take. (TODO: clarify / explain)
 function plan(state::NaceState, actions, max_depth::Int, max_queue_len::Int, custom_goal)
     # Initialize variables
     best_actions = []
-    best_score = Inf32
+    best_score = -Inf32
     best_action_combination_for_revisit = []
     oldest_age = 0.0f0
 
-    # 1. Search for argmax V(s) > 0
-    best_actions, best_score =
-        bfs_with_predictor(state, actions, max_depth, max_queue_len, :argmax)
-    if !isempty(best_actions)
-        return best_actions, best_score, best_action_combination_for_revisit, oldest_age
+    # Get the best rules for planning
+    best_rules = choose_rules(state.rules)
+
+    # If we have good rules, use them for planning
+    if !isempty(best_rules)
+        best_actions, best_score =
+            bfs_with_predictor(state, actions, max_depth, max_queue_len, :argmax)
+        if !isempty(best_actions)
+            return best_actions, best_score, best_action_combination_for_revisit, oldest_age
+        end
     end
 
-    # 2. Search for argmin S(s) < 1
+    # If no good rules found, try exploration
     best_actions, best_score =
         bfs_with_predictor(state, actions, max_depth, max_queue_len, :argmin)
     if !isempty(best_actions)
         return best_actions, best_score, best_action_combination_for_revisit, oldest_age
     end
 
-    # 3. Random action
+    # If all else fails, use the oldest rule for guidance
+    oldest_rule = oldest_observed(state.rules, max_depth)
+    if !isnothing(oldest_rule)
+        oldest_age = oldest_rule.acc_score
+        action_sequence = [oldest_rule.precondition.action]
+        return action_sequence, 0.0f0, action_sequence, oldest_age
+    end
+
+    # Last resort: random action
     random_action = [rand(actions)]
-    return random_action, best_score, best_action_combination_for_revisit, oldest_age
+    return random_action, 0.0f0, [], oldest_age
 end
 
 function bfs_with_predictor(
@@ -404,42 +446,54 @@ function bfs_with_predictor(
     max_queue_len::Int,
     mode::Symbol,
 )
-    queue = Queue{Tuple{NaceState,Vector{String},Int}}()
-    enqueue!(queue, (state, [], 0))
+    queue = Queue{Tuple{NaceState,Vector{String},Int,Float32}}()
+    enqueue!(queue, (state, [], 0, 0.0f0))
     best_actions = []
     best_score = mode == :argmax ? -Inf32 : Inf32
 
     while !isempty(queue)
-        current_state, action_sequence, depth = dequeue!(queue)
+        current_state, action_sequence, depth, current_score = dequeue!(queue)
 
         if depth > max_depth
             continue
         end
 
-        per_ext_post, score, age, _ = predict(current_state, 7, 7)
-        # Implement logic to apply rules with Q(r, c) = 1 and maximum truthexp(r)
-        # Ensure the predicted state is constructed correctly
-        predicted_state = NaceState(
-            current_state.t + 1,
-            current_state.focus,
-            per_ext_post,
-            current_state.perceived_externals,
-            current_state.act_ante,
-            current_state.rules,
-        )
+        # Predict next state
+        per_ext_post = predict(current_state, 7, 7)
 
-        if (mode == :argmax && score > 0) || (mode == :argmin && score < 1)
-            if (mode == :argmax && score > best_score) ||
-               (mode == :argmin && score < best_score)
-                best_actions = action_sequence
-                best_score = score
+        # Calculate score based on rules and current state
+        score = 0.0f0
+        for rule ∈ current_state.rules
+            if rule_active(rule)
+                score += rule.score * truthexp(rule)
             end
         end
 
+        # Update best score and actions
+        if (mode == :argmax && score > best_score) ||
+           (mode == :argmin && score < best_score)
+            best_actions = action_sequence
+            best_score = score
+        end
+
+        # Add new states to queue
         for action ∈ actions
-            new_state = deepcopy(predicted_state)
-            new_action_sequence = vcat(action_sequence, [action])
-            enqueue!(queue, (new_state, new_action_sequence, depth + 1))
+            if action != "Unused"
+                new_state = NaceState(
+                    current_state.t + 1,
+                    current_state.focus,
+                    per_ext_post,
+                    current_state.perceived_externals,
+                    action,
+                    current_state.rules,
+                    current_state.values,
+                )
+                new_score = current_score + score
+                enqueue!(
+                    queue,
+                    (new_state, vcat(action_sequence, [action]), depth + 1, new_score),
+                )
+            end
         end
 
         if length(queue) > max_queue_len
@@ -459,17 +513,59 @@ An agent cycle consists of running all the previously defined logic to produce
 information necessary to update its state and select the next action to take for one timestep.
 """
 function cycle(state::NaceState)::NaceState
+    # Update rule evidence based on current observations
+    if !isempty(state.per_ext_ante)
+        M_change, M_observation_mismatched, M_prediction_mismatched =
+            calculate_sets(state, state)
+        rule_memory = RuleMemory(state.rules)
+        update_rule_evidence(
+            rule_memory,
+            M_change,
+            M_observation_mismatched,
+            M_prediction_mismatched,
+        )
+    end
+
     # Predict the next state
     new_world = predict(state, 7, 7)
 
     # Hypothesize new rules
     focus, rule_evidence, new_rules, new_negrules = hypothesize(state)
 
-    # Plan the next actions
-    planned_actions = plan(state, keys(ACTION_TO_IDX), 100, 2000, nothing)
+    # Update focus based on prediction mismatches and changes
+    if !isempty(state.per_ext_ante)
+        M_change, _, M_prediction_mismatched = calculate_sets(state, state)
+        focus = union(
+            focus,
+            Set(cell.item for cell ∈ M_change),
+            Set(cell.item for cell ∈ M_prediction_mismatched),
+        )
+    end
 
-    # Determine the next action
-    action = isempty(planned_actions) ? IDX_TO_ACTION[rand(0:7-1)] : planned_actions[1]
+    # Plan the next actions using the improved planning system
+    planned_actions, score, revisit_actions, age =
+        plan(state, keys(ACTION_TO_IDX), 100, 2000, nothing)
+
+    # Determine the next action, preferring planned actions over random ones
+    action = if !isempty(planned_actions)
+        planned_actions[1]
+    else
+        # If no planned actions, use the action from the best rule
+        best_rule = max_truth_exp(state.rules)
+        if !isnothing(best_rule)
+            best_rule.precondition.action
+        else
+            # Fallback to random action if no good rules exist
+            IDX_TO_ACTION[rand(0:6)]
+        end
+    end
+
+    # Update rule scores based on the chosen action
+    for rule ∈ state.rules
+        if rule.precondition.action == action
+            rule.score += 0.1f0  # Small positive reinforcement for chosen action
+        end
+    end
 
     # Return the updated state
     return NaceState(

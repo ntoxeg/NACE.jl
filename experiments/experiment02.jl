@@ -22,12 +22,7 @@ Run an example on an environment.
 """
 function run_example(env)
     obs, info = env.reset()
-    agent = NaceAgent(
-        init_state(),
-        nace_policy,
-        nace_perceptor,
-        nace_effector,
-    )
+    agent = NaceAgent(init_state(), nace_policy, nace_perceptor, nace_effector)
     for _ ∈ 1:10
         action = agent(obs)
         println("Action: $(IDX_TO_ACTION[action])")
