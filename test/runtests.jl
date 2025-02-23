@@ -8,13 +8,20 @@ using NACE
             init_state(),
             :test,
             Cell(1, 1, "red"),
-            Cell(2, 2, "blue"), 
+            Cell(2, 2, "blue"),
             Cell(1, 1, "red"),
-            "move"
+            "move",
         )
         @test rule.precondition.cell1 == Cell(1, 1, "red")
         @test rule.precondition.cell2 == Cell(2, 2, "blue")
         @test rule.consequence.cell == Cell(1, 1, "red")
+
+        expected = """Rule[
+Precondition: if red and blue then red,
+Consequence: red,
+Score: 0.0
+]"""
+        @test string(rule) == expected
     end
     @testset "integration:agent" begin
         env = NACE.gym.make("MiniGrid-LavaCrossingS11N5-v0", render_mode="human")
