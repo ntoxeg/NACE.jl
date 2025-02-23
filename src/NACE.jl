@@ -1,6 +1,15 @@
 module NACE
 export make_random_policy,
-    run_example_random, NaceAgent, init_state, nace_effector, nace_perceptor, nace_policy
+    run_example_random,
+    NaceAgent,
+    init_state,
+    nace_effector,
+    nace_perceptor,
+    nace_policy,
+    IDX_TO_ACTION,
+    ACTION_TO_IDX,
+    IDX_TO_OBJECT,
+    OBJECT_TO_IDX
 
 using DataStructures
 using PyCall
@@ -26,7 +35,7 @@ Return a function that generates a random policy for the given environment.
 function make_random_policy(env)
     n = convert(Int, env.action_space.n)
 
-    function random_policy(state, observation)
+    function random_policy(state::Any, observation)
         return rand(0:n-1)
     end
 
@@ -40,7 +49,7 @@ end
 """
 function run_example_random(env)
     obs, info = env.reset()
-    agent = Agent(nothing, make_random_policy(env))
+    agent = Agent{Any}(nothing, make_random_policy(env))
     for _ ∈ 1:10
         action = agent(obs)
         println("Action: $(IDX_TO_ACTION[action])")
@@ -54,7 +63,8 @@ end
 
 Create an empty state with time step zero.
 """
-init_state() = NaceState(0, Set(), Dict(), Dict(), "Unused", Set{Rule}(), Vector{Int}())
+init_state() =
+    NaceState(0, Set{Cell}(), Set{Rule}(), Vector{Int}(), AgentContext(Dict(), Dict(), ""))
 
 """
     (agent::NaceAgent)(obs)
@@ -68,17 +78,14 @@ Returns the chosen action, does not have side-effects except for updating the ag
 function (agent::NaceAgent)(obs)
     percept_state = agent.perceptor(obs)
     values = percept_state[:VALUES]
-    per_ext_ante =
-        isempty(agent.state.per_ext_ante) ? percept_state : agent.state.per_ext_ante
-    agent.state = NaceState(
-        agent.state.t,
-        agent.state.focus,
-        percept_state,
-        per_ext_ante,
-        agent.state.act_ante,
-        agent.state.rules,
-        values,
-    )
+    per_ext_ante = if isempty(agent.state.context.per_ext_ante)
+        percept_state
+    else
+        agent.state.context.per_ext_ante
+    end
+    new_context = AgentContext(percept_state, per_ext_ante, agent.state.context.act_ante)
+    agent.state =
+        NaceState(agent.state.t, agent.state.focus, agent.state.rules, values, new_context)
     agent.state = cycle(agent.state)
     agent.effector(agent.policy(agent.state))
 end
@@ -93,18 +100,40 @@ data structure and returns a representation usable within the agent's internal
 logic.
 """
 function nace_perceptor(obs)
-    objects = map(i -> IDX_TO_OBJECT[i], obs["image"][:, :, 1])
-    objects = reshape(
-        [Cell(idx[1], idx[2], objects[idx]) for idx ∈ CartesianIndices(objects)],
-        size(objects),
-    )
-    values = map(obj -> obj == "goal" ? 1 : (obj == "lava" ? -1 : 0), vec(objects))
-    Dict(
-        :DIR => obs["direction"],
-        :BOARD => objects,
-        :TASK => obs["mission"],
-        :VALUES => values,
-    )
+    # Ensure we have the required observation fields
+    if !haskey(obs, "image") || !haskey(obs, "direction")
+        return Dict{Symbol,Any}(
+            :DIR => 0,
+            :BOARD => Matrix{Cell}(undef, 0, 0),
+            :TASK => "",
+            :VALUES => Float32[],
+        )
+    end
+
+    # Create the board representation
+    try
+        objects = map(i -> IDX_TO_OBJECT[i], obs["image"][:, :, 1])
+        board = reshape(
+            [Cell(idx[1], idx[2], objects[idx]) for idx ∈ CartesianIndices(objects)],
+            size(objects),
+        )
+        values = map(obj -> obj == "goal" ? 1 : (obj == "lava" ? -1 : 0), vec(objects))
+
+        return Dict{Symbol,Any}(
+            :DIR => obs["direction"],
+            :BOARD => board,
+            :TASK => get(obs, "mission", ""),
+            :VALUES => values,
+        )
+    catch e
+        # Return empty state if there's any error
+        return Dict{Symbol,Any}(
+            :DIR => 0,
+            :BOARD => Matrix{Cell}(undef, 0, 0),
+            :TASK => "",
+            :VALUES => Float32[],
+        )
+    end
 end
 
 """
@@ -113,7 +142,7 @@ end
 Run the policy
 """
 function nace_policy(state)
-    state.act_ante
+    state.context.act_ante
 end
 
 """
@@ -139,14 +168,18 @@ function observe(state::NaceState) end
 TBW
 """
 function hypothesize(state::NaceState)
-    new_rules = Set()
-    for c ∈ state.focus
-        # Generate new hypotheses
+    # Filter focus to ensure only Cells are present
+    filtered_focus = Set{Cell}(filter(x -> x isa Cell, state.focus))
+
+    new_rules = Set{Rule}()
+    for c ∈ filtered_focus
+        # Generate new hypotheses using properly-typed Cell
         new_rules = union(new_rules, new_hypotheses(state, c))
     end
+
     # Initialize containers for rule evidence
-    rule_evidence = Dict()
-    new_negrules = Set()
+    rule_evidence = Dict{Rule,Bool}()
+    new_negrules = Set{Rule}()
 
     # Update rule evidences
     for rule ∈ new_rules
@@ -160,8 +193,8 @@ function hypothesize(state::NaceState)
     # Filter rules
     filtered_rules = filter_rules(new_rules, rule_evidence)
 
-    # Return updated focus, rule evidence, new rules, and negative rules
-    return state.focus, rule_evidence, filtered_rules, new_negrules
+    # Return updated focus (filtered), rule evidence, filtered new rules, and negative rules
+    return filtered_focus, rule_evidence, filtered_rules, new_negrules
 end
 
 """
@@ -171,18 +204,25 @@ end
 
   - c3: the cell to be used for the consequence.
 """
-function new_hypotheses(agent_state::NaceState, c3)
-    percv_ext = agent_state.perceived_externals
-    previous_externals = agent_state.per_ext_ante
-    action = agent_state.act_ante
+function new_hypotheses(agent_state::NaceState, c3::Cell)
+    percv_ext = agent_state.context.perceived_externals
+    previous_externals = agent_state.context.per_ext_ante
+    action = agent_state.context.act_ante
     new_rules = Set()
 
     board_ante = previous_externals[:BOARD]
     board = percv_ext[:BOARD]
     height, width = size(board)
 
+    radius = 1
     for i ∈ 1:height, j ∈ 1:width
+        if abs(i - c3.x) > radius || abs(j - c3.y) > radius
+            continue
+        end
         for k ∈ 1:height, l ∈ 1:width
+            if abs(k - c3.x) > radius || abs(l - c3.y) > radius
+                continue
+            end
             param_name = :BOARD
             c1 = board_ante[i, j]  # one precondition cell
             c2 = board_ante[k, l]  # another precondition cell
@@ -227,22 +267,27 @@ function generate_rule(
     param_name::Symbol,
     cell1::Cell,
     cell2::Cell,
-    cell3,
-    action,
+    cell3::Cell,
+    action::String,
 )
-    # Create Precondition with appropriate values
-    precondition = Precondition(cell1, cell2, agent_state, action)
+    # Create Precondition with appropriate values, generating an expression from the cell items
+    local expr =
+        "if " *
+        string(cell1.item) *
+        " and " *
+        string(cell2.item) *
+        " then " *
+        string(cell3.item)
+    precondition = Precondition(cell1, cell2, agent_state.context, action, expr)
 
-    # Create Consequence with appropriate values
-    consequence = Consequence(Cell(cell1.x, cell1.y, cell3), agent_state, 0)  # Initialize reward as 0
+    # Create Consequence with appropriate values, using cell3.item
+    consequence =
+        Consequence(Cell(cell1.x, cell1.y, cell3.item), agent_state.context, 0.0f0)
 
-    # Initialize evidence and scores
-    evidence_pos = Int32(0)
-    evidence_neg = Int32(0)
+    evidence_pos = 0.0f0
+    evidence_neg = 0.0f0
     score = 0.0f0
     acc_score = 0.0f0
-
-    # Return Rule with all required arguments
     return Rule(precondition, consequence, evidence_pos, evidence_neg, score, acc_score)
 end
 
@@ -259,24 +304,44 @@ end
 """
     predict(state::NaceState, grid_width::Int, grid_height::Int)
 
-Apply rules to predict the future world state. (TODO: explain more)
+Apply rules to predict the future world state. Returns a copy of the previous external state
+if there are no rules or if the state is empty.
 """
 function predict(state::NaceState, grid_width::Int, grid_height::Int)
-    per_ext_post = deepcopy(state.per_ext_ante)
+    # If we have no previous state or rules, just return a copy of the current state
+    if isempty(state.context.per_ext_ante) || isempty(state.rules)
+        return deepcopy(state.context.perceived_externals)
+    end
+
+    # Check if BOARD exists in the dictionaries
+    if !haskey(state.context.per_ext_ante, :BOARD) ||
+       !haskey(state.context.perceived_externals, :BOARD)
+        return deepcopy(state.context.perceived_externals)
+    end
+
+    per_ext_post = deepcopy(state.context.per_ext_ante)
     used_rules_sumscore = 0.0f0
     used_rules_amount = 0
 
     # Get the best rules for prediction
     best_rules = choose_rules(state.rules)
+    isempty(best_rules) && return per_ext_post
+
     position_scores = Dict{Tuple{Int,Int},Any}()
     highest_highscore = 0.0f0
 
     # Calculate scores for each position
     for x ∈ 1:grid_width, y ∈ 1:grid_height
-        cell = state.perceived_externals[:BOARD][x, y]
+        # Safely get the cell from the board
+        cell = try
+            state.context.perceived_externals[:BOARD][x, y]
+        catch
+            continue
+        end
+
         scores = Dict{Rule,Float32}()
         highscore = 0.0f0
-        highscore_rule = nothing
+        highscore_rule = rule_empty()
 
         for rule ∈ best_rules
             # Calculate rule applicability score
@@ -295,12 +360,16 @@ function predict(state::NaceState, grid_width::Int, grid_height::Int)
     end
 
     # Apply the best rules to predict the next state
-    for (pos, (scores, highscore, rule)) ∈ position_scores
-        if !isnothing(rule) && applicable(state_value(state), scores[rule])
+    for (pos, (scores, highscore, rule::Rule)) ∈ position_scores
+        if !isnothing(rule) && rule_applicable(state_value(state), get(scores, rule, 0.0f0))
             x, y = pos
-            per_ext_post[:BOARD][x, y] = rule.consequence.cell.item
-            used_rules_sumscore += rule.score
-            used_rules_amount += 1
+            try
+                per_ext_post[:BOARD][x, y] = rule.consequence.cell
+                used_rules_sumscore += rule.score
+                used_rules_amount += 1
+            catch
+                continue
+            end
         end
     end
 
@@ -321,14 +390,14 @@ end
 Filter hypotheses down to ones with high enough quality
 """
 function filter_hypotheses(state::NaceState)
-    width, height = size(state.perceived_externals[:BOARD])
+    width, height = size(state.context.perceived_externals[:BOARD])
     attend_positions = Set{Tuple{Int,Int}}()
     position_scores = Dict{Tuple{Int,Int},Any}()
     highest_highscore = 0.0f0
 
     for y ∈ 1:height
         for x ∈ 1:width
-            if state.per_ext_ante[:BOARD][x, y] in state.focus
+            if state.context.per_ext_ante[:BOARD][x, y] in state.focus
                 push!(attend_positions, (x, y))
                 for rule ∈ state.rules
                     action_score_and_preconditions = collect(rule.precondition)
@@ -350,14 +419,14 @@ function filter_hypotheses(state::NaceState)
             precondition, consequence = rule
             action_score_and_preconditions = collect(precondition)
             values = action_score_and_preconditions[2]
-            if action_score_and_preconditions[1] == state.act_ante
+            if action_score_and_preconditions[1] == state.context.act_ante
                 scores[rule] = 0.0f0
             else
                 continue
             end
             continue_flag = false
             for i ∈ eachindex(values)
-                if values[i] != state.per_ext_ante[:VALUES][i+1]
+                if values[i] != state.context.per_ext_ante[:VALUES][i+1]
                     continue_flag = true
                     break
                 end
@@ -370,7 +439,7 @@ function filter_hypotheses(state::NaceState)
                     continue_flag = true
                     break
                 end
-                if state.per_ext_ante[:BOARD][x+x_rel][y+y_rel] == required_state
+                if state.context.per_ext_ante[:BOARD][x+x_rel][y+y_rel] == required_state
                     scores[rule] += 1.0
                 end
             end
@@ -448,7 +517,7 @@ function bfs_with_predictor(
 )
     queue = Queue{Tuple{NaceState,Vector{String},Int,Float32}}()
     enqueue!(queue, (state, [], 0, 0.0f0))
-    best_actions = []
+    best_actions = String[]  # Initialize with correct type
     best_score = mode == :argmax ? -Inf32 : Inf32
 
     while !isempty(queue)
@@ -463,9 +532,11 @@ function bfs_with_predictor(
 
         # Calculate score based on rules and current state
         score = 0.0f0
-        for rule ∈ current_state.rules
-            if rule_active(rule)
-                score += rule.score * truthexp(rule)
+        if !isempty(current_state.rules)
+            for rule ∈ current_state.rules
+                if rule_active(rule)
+                    score += rule.score * truthexp(rule)
+                end
             end
         end
 
@@ -479,14 +550,17 @@ function bfs_with_predictor(
         # Add new states to queue
         for action ∈ actions
             if action != "Unused"
+                new_context = AgentContext(
+                    per_ext_post,
+                    current_state.context.perceived_externals,
+                    action,
+                )
                 new_state = NaceState(
                     current_state.t + 1,
                     current_state.focus,
-                    per_ext_post,
-                    current_state.perceived_externals,
-                    action,
                     current_state.rules,
                     current_state.values,
+                    new_context,
                 )
                 new_score = current_score + score
                 enqueue!(
@@ -513,8 +587,14 @@ An agent cycle consists of running all the previously defined logic to produce
 information necessary to update its state and select the next action to take for one timestep.
 """
 function cycle(state::NaceState)::NaceState
+    # Initialize empty sets for when we can't update rules
+    focus = Set{Cell}()
+    new_rules = Set{Rule}()
+    M_change = Set{Cell}()
+    M_prediction_mismatched = Set{Cell}()
+
     # Update rule evidence based on current observations
-    if !isempty(state.per_ext_ante)
+    if !isempty(state.context.per_ext_ante)
         M_change, M_observation_mismatched, M_prediction_mismatched =
             calculate_sets(state, state)
         rule_memory = RuleMemory(state.rules)
@@ -530,15 +610,20 @@ function cycle(state::NaceState)::NaceState
     new_world = predict(state, 7, 7)
 
     # Hypothesize new rules
-    focus, rule_evidence, new_rules, new_negrules = hypothesize(state)
+    try
+        focus, rule_evidence, new_rules, new_negrules = hypothesize(state)
+    catch e
+        # If hypothesizing fails, keep existing focus and no new rules
+        focus = state.focus
+        new_rules = Set{Rule}()
+    end
 
     # Update focus based on prediction mismatches and changes
-    if !isempty(state.per_ext_ante)
-        M_change, _, M_prediction_mismatched = calculate_sets(state, state)
+    if !isempty(state.context.per_ext_ante)
         focus = union(
-            focus,
-            Set(cell.item for cell ∈ M_change),
-            Set(cell.item for cell ∈ M_prediction_mismatched),
+            Set{Cell}(filter(x -> x isa Cell, state.focus)),
+            M_change,
+            M_prediction_mismatched,
         )
     end
 
@@ -567,15 +652,16 @@ function cycle(state::NaceState)::NaceState
         end
     end
 
+    # Create new context with updated world state
+    new_context = AgentContext(new_world, state.context.perceived_externals, action)
+
     # Return the updated state
     return NaceState(
         state.t + 1,
         focus,
-        new_world,
-        state.perceived_externals,
-        action,
         union(state.rules, new_rules),
         state.values,
+        new_context,
     )
 end
 

@@ -1,56 +1,75 @@
-export Rule, applicable, Cell, State, rule_ratio, cell_value, state_value, truthexp
+export Rule, rule_applicable, Cell, State, rule_ratio, cell_value, state_value, truthexp
+
+struct Cell
+    x::Int
+    y::Int
+    item::String
+end
+
+struct AgentContext
+    perceived_externals::Dict
+    per_ext_ante::Dict
+    act_ante::String
+end
 
 struct Precondition
-    cell1::Any
-    cell2::Any
-    agent_state::Any
-    action::Any
+    cell1::Cell
+    cell2::Cell
+    context::AgentContext
+    action::String
+    expr::String
 end
 
 struct Consequence
-    cell::Any
-    agent_state::Any
-    reward::Any
+    cell::Cell
+    context::AgentContext
+    reward::Float32
 end
 
-struct Rule
+mutable struct Rule
     precondition::Precondition
     consequence::Consequence
-    evidence_pos::Int32
-    evidence_neg::Int32
+    evidence_pos::Float32
+    evidence_neg::Float32
     score::Float32
     acc_score::Float32
 end
 
 """
-    NaceState(t, focus, perceived_externals, per_ext_ante, act_ante, rules, values)
+    NaceState(t, focus, rules, values, context)
 
 Agent state structure
 
 # Arguments
 
   - `t` :: Int: Current time step.
-  - `focus` :: Set: Set of objects the agent is currently focused on.
-  - `perceived_externals` :: Dict: Perceived external state, including objects, walls, and agents.
-  - `per_ext_ante` :: Dict: Previous perceived external state from the previous time step.
-  - `act_ante` :: String: Action taken in the previous time step.
-  - `rules` :: Set: Set of rules that the agent is currently believes.
+  - `focus` :: Set{Cell}: Set of objects the agent is currently focused on.
+  - `rules` :: Set{Rule}: Set of rules that the agent currently believes.
+  - `values` :: Vector{Int}: Vector of values associated with the agent's state.
+  - `context` :: AgentContext: Contains perceived externals, previous state and action.
 """
 struct NaceState
     t::Int
-    focus::Set
-    perceived_externals::Dict
-    per_ext_ante::Dict
-    act_ante::String
+    focus::Set{Cell}
     rules::Set{Rule}
     values::Vector{Int}
+    context::AgentContext
+end
+
+Cell(x::Int, y::Int, item) = Cell(x, y, item)
+
+function cond_match(cond1::Precondition, cond2::Precondition)
+    cond1.expr == cond2.expr
 end
 
 function truthexp_with(cfun::Function, r::Rule)::AbstractFloat
     w = r.evidence_neg + r.evidence_pos
+    if w == 0
+        return 0.5f0  # Return neutral value when no evidence
+    end
     f = r.evidence_pos / w
     c = cfun(w)
-    f * c + 0.5 * (1 - c)
+    f * c + 0.5f0 * (1 - c)
 end
 
 confidence_count(w) = w / (w + 1)
@@ -75,6 +94,7 @@ function update_rule_evidence(
     M_observation_mismatched,
     M_prediction_mismatched,
 )
+    learning_rate = 0.1f0
     rules = rulem.indeterminate_rules ∪ rulem.active_rules ∪ rulem.inactive_rules
     m = M_change ∪ M_observation_mismatched
     for rule ∈ rules
@@ -82,10 +102,10 @@ function update_rule_evidence(
         c2 = rule.precondition.cell2
         c3 = rule.consequence.cell
         if Set([c1, c2, c3]) ⊆ m
-            rule.evidence_pos += 1
+            rule.evidence_pos += learning_rate
         end
         if c3 ∈ M_prediction_mismatched
-            rule.evidence_neg += 1
+            rule.evidence_neg += learning_rate
         end
     end
 end
@@ -118,8 +138,8 @@ function calculate_sets(previous_state::NaceState, current_state::NaceState)
     M_observation_mismatched = Set{Cell}()
     M_prediction_mismatched = Set{Cell}()
 
-    prev_board = previous_state.perceived_externals[:BOARD]
-    curr_board = current_state.perceived_externals[:BOARD]
+    prev_board = previous_state.context.perceived_externals[:BOARD]
+    curr_board = current_state.context.perceived_externals[:BOARD]
 
     # Calculate changes between states
     for i ∈ 1:size(prev_board, 1), j ∈ 1:size(prev_board, 2)
@@ -154,38 +174,45 @@ function calculate_sets(previous_state::NaceState, current_state::NaceState)
 end
 
 function Base.show(io::IO, rule::Rule)
-    precondition =
+    precondition_str =
         replace(rule.precondition.expr, r"VALUES\s*==\s*\[(.*?)\]" => s"VALUES =\n\1")
-    precondition = replace(precondition, r"DIR\s*==\s*(\d+)" => s"DIR =\n\1")
-    precondition =
-        format_2d_array(replace(precondition, r"BOARD\s*==\s*\[(.*?)\]" => s"BOARD =\n\1"))
-    consequence = replace(rule.consequence, r"VALUES\s*=\s*\[(.*?)\]" => s"VALUES =\n\1")
-    consequence = replace(consequence, r"DIR\s*=\s*(\d+)" => s"DIR =\n\1")
-    consequence =
-        format_2d_array(replace(consequence, r"BOARD\s*=\s*\[(.*?)\]" => s"BOARD =\n\1"))
+    precondition_str = replace(precondition_str, r"DIR\s*==\s*(\d+)" => s"DIR =\n\1")
+    precondition_str = format_2d_array(replace(
+        precondition_str,
+        r"BOARD\s*==\s*\[(.*?)\]" => s"BOARD =\n\1",
+    ))
+
+    consequence_str = string(rule.consequence)
+    consequence_str = replace(consequence_str, r"VALUES\s*=\s*\[(.*?)\]" => s"VALUES =\n\1")
+    consequence_str = replace(consequence_str, r"DIR\s*=\s*(\d+)" => s"DIR =\n\1")
+    consequence_str = format_2d_array(replace(
+        consequence_str,
+        r"BOARD\s*=\s*\[(.*?)\]" => s"BOARD =\n\1",
+    ))
+
     print(
         io,
-        "Rule[\nPrecondition:\n$precondition,\n\nConsequence:\n$consequence,\nScore: $(rule.score)\n]",
+        "Rule[\nPrecondition:\n$precondition_str,\n\nConsequence:\n$consequence_str,\nScore: $(rule.score)\n]",
     )
 end
 
 function format_rule_comp(key::AbstractString, comp::AbstractString)
     rows = split(comp, ";")
     array_rows = map(row -> split(strip(row)), rows)
+    prefix = "$key = "
     if key == "VALUES"
         convert_row_int(row) = map(el -> parse(Int32, String(el)), row)
         array_rows = map(row -> convert_row_int(row), array_rows)
         prefix = "$key = \n"
-    end
-    if key == "BOARD"
+    elseif key == "BOARD"
         convert_row_str(row) = map(el -> replace(el, "\"" => ""), row)
         array_rows = map(row -> convert_row_str(row), array_rows)
         prefix = "$key = \n"
-    end
-    if key == "DIR"
+    elseif key == "DIR"
         convert_dir(row) = map(el -> parse(Int32, String(el)), row)
         array_rows = map(row -> convert_dir(row), array_rows)
-        prefix = "$key = "
+    else
+        println("[WARNING] Unknown key: $key")
     end
     data = length(array_rows) > 1 ? stack(array_rows) : array_rows[1][1]
     prefix * repr("text/plain", data)
@@ -193,6 +220,9 @@ end
 
 function format_2d_array(s::AbstractString)
     comps = split(s, "=")
+    if length(comps) < 2
+        return s
+    end
     fmtstr = format_rule_comp(strip(comps[1]), comps[2])
     if length(comps) == 4
         fmtstr2 = format_rule_comp(strip(comps[3]), comps[4])
@@ -204,15 +234,17 @@ end
 
 Base.show(io::IO, cond::Precondition) = print(io, "Condition(Expression: $(cond.expr))")
 
-struct Cell
-    x::Int
-    y::Int
-    item::Any
+# Added definition for Consequence
+function Base.show(io::IO, c::Consequence)
+    print(io, "Consequence(cell=$(c.cell), reward=$(c.reward))")
 end
 
-# TODO: determine Condition structure
-function cond_match(cond1::Precondition, cond2::Precondition)
-    cond1.expr == cond2.expr
+function rule_empty()
+    empty_context = AgentContext(Dict(), Dict(), "")
+    empty_state = NaceState(0, Set{Cell}(), Set{Rule}(), Vector{Int}(), empty_context)
+    precond = Precondition(Cell(0, 0, ""), Cell(0, 0, ""), empty_context, "", "empty")
+    conseq = Consequence(Cell(0, 0, ""), empty_context, 0.0f0)
+    Rule(precond, conseq, 0.0f0, 0.0f0, 0.0f0, 0.0f0)
 end
 
 """
@@ -221,18 +253,20 @@ end
 Calculate the match ratio of a rule for a given cell.
 """
 function rule_ratio(c::Cell, r::Rule)
-    length(filter(cx -> cond_match(r.precondition, cx), c.conds)) / length(c.conds)
+    c.item == r.consequence.cell.item ? 1.0f0 : 0.0f0
 end
 
 """
-    cell_value(rs::Vector{Rule}, c::Cell)
+    cell_value(rs::Set{Rule}, c::Cell)
 
 Calculate the match value of a cell.
 
 The match value of a cell is the maximum of rule match ratios, for all possible rules.
+If there are no rules, returns 0.0f0.
 """
 function cell_value(rs::Set{Rule}, c::Cell)
-    max(map(r -> rule_ratio(c, r), rs))
+    isempty(rs) && return 0.0f0
+    maximum(map(r -> rule_ratio(c, r), collect(rs)))
 end
 
 """
@@ -241,17 +275,21 @@ end
 Calculate the match value of a state.
 
 The state match value is the maximum match value of all cells in the state.
+If there are no cells or rules, returns 0.0f0.
 """
 function state_value(s::NaceState)
-    max(map(c -> cell_value(s.rules, c), s.perceived_externals[:BOARD]))
+    board = s.context.perceived_externals[:BOARD]
+    isempty(board) && return 0.0f0
+    isempty(s.rules) && return 0.0f0
+    maximum(map(c -> cell_value(s.rules, c), collect(board)))
 end
 
 """
-    applicable(sv::Float64, rr::Float64)::Bool
+    rule_applicable(sv::Float64, rr::Float64)::Bool
 
 Determine whether a rule is applicable based on its match ratio relative to the state value.
 """
-function applicable(sv::Float64, rr::Float64)::Bool
+function rule_applicable(sv::Float32, rr::Float32)::Bool
     rr > 0.0 && rr == sv
 end
 
@@ -346,4 +384,29 @@ function oldest_observed(rules::Set{Rule}, max_age::Int)
         end
     end
     oldest_rule
+end
+
+function make_rule(
+    agent_state::NaceState,
+    param_name::Symbol,
+    cell1::Cell,
+    cell2::Cell,
+    cell3::Cell,
+    action::String,
+)
+    local expr =
+        "if " *
+        string(cell1.item) *
+        " and " *
+        string(cell2.item) *
+        " then " *
+        string(cell3.item)
+    precondition = Precondition(cell1, cell2, agent_state.context, action, expr)
+    consequence =
+        Consequence(Cell(cell1.x, cell1.y, cell3.item), agent_state.context, 0.0f0)
+    evidence_pos = 0.0f0
+    evidence_neg = 0.0f0
+    score = 0.0f0
+    acc_score = 0.0f0
+    return Rule(precondition, consequence, evidence_pos, evidence_neg, score, acc_score)
 end
