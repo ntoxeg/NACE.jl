@@ -1,4 +1,5 @@
-export Rule, rule_applicable, Cell, State, rule_ratio, cell_value, state_value, truthexp
+export Rule,
+    rule_applicable, Cell, NaceState, rule_ratio, cell_value, state_value, truthexp, make_rule
 
 struct Cell
     x::Int
@@ -270,7 +271,7 @@ function cell_value(rs::Set{Rule}, c::Cell)
 end
 
 """
-    state_value(s::State)
+    state_value(s::NaceState)
 
 Calculate the match value of a state.
 
