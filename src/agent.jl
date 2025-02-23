@@ -1,6 +1,15 @@
+"""
+    Agent{S}
 
-mutable struct Agent
-    state::Any
+Generic agent structure with state of type S.
+
+# Arguments
+
+  - `state::S`: Current state of the agent
+  - `policy::Function`: Policy function that determines the next action
+"""
+mutable struct Agent{S}
+    state::S
     policy::Function
 end
 
