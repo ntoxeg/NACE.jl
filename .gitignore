@@ -35,3 +35,4 @@ poetry.lock
 .aider*
 
 .envrc
+rules_output.txt

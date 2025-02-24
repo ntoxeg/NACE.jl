@@ -34,12 +34,15 @@ Score: 0.0
         function run_example(env)
             obs, info = env.reset()
             agent = NaceAgent(init_state(), nace_policy, nace_perceptor, nace_effector)
-            for _ ∈ 1:10
+            for step ∈ 1:10
                 action = agent(obs)
-                println("Action: $(NACE.IDX_TO_ACTION[action])")
+                @info "Step $step" action = NACE.IDX_TO_ACTION[action]
                 obs, info = env.step(action)
-                println("Current rules: $(agent.state.rules)")
+                @debug "Step info" info = info
             end
+
+            # Write final rules to file
+            write_rules_to_file(agent.state.rules, "rules_output.txt")
             true
         end
         @test run_example(env)

@@ -1,22 +1,36 @@
-"""
-Debug levels:
-0 = No debug output
-1 = Basic state changes and important events
-2 = Detailed rule generation and evidence updates
-3 = Very detailed cell-by-cell analysis
-"""
-const DEBUG_LEVEL = Ref(0)
+using Logging
 
-"""
-    debug_print(level::Int, msg::String)
+# Remove old debug system
+# """
+# Debug levels:
+# 0 = No debug output
+# 1 = Basic state changes and important events
+# 2 = Detailed rule generation and evidence updates
+# 3 = Very detailed cell-by-cell analysis
+# """
+# const DEBUG_LEVEL = Ref(0)
 
-Print debug message if current debug level is >= specified level.
-"""
-function debug_print(level::Int, msg::String)
-    if DEBUG_LEVEL[] >= level
-        println(msg)
-    end
+# """
+#     debug_print(level::Int, msg::String)
+# 
+# Print debug message if current debug level is >= specified level.
+# """
+# function debug_print(level::Int, msg::String)
+#     if DEBUG_LEVEL[] >= level
+#         println(msg)
+#     end
+# end
+
+# Configure default logging level
+const LOG_LEVEL = Ref(Logging.Info)
+
+function set_log_level(level::LogLevel)
+    global_logger(ConsoleLogger(level))
+    LOG_LEVEL[] = level
 end
+
+# Set initial log level
+set_log_level(Logging.Info)
 
 export Rule,
     rule_applicable,
@@ -43,7 +57,8 @@ export Rule,
     best_hypothesis,
     highest_reward,
     plan,
-    bfs_with_predictor
+    bfs_with_predictor,
+    write_rules_to_file
 
 struct Cell
     x::Int
@@ -147,11 +162,10 @@ function update_rule_evidence(
     M_observation_mismatched,
     M_prediction_mismatched,
 )
-    learning_rate = 0.1f0
+    evidence_mod = 1.0f0
     rules = rulem.indeterminate_rules ∪ rulem.active_rules ∪ rulem.inactive_rules
     m = M_change ∪ M_observation_mismatched
-    println("Updating evidence for $(length(rules)) rules")
-    println("Changes and mismatches: $(length(m)) cells")
+    @info "Updating rule evidence" total_rules = length(rules) changed_cells = length(m)
 
     for rule ∈ rules
         c1 = rule.precondition.cell1
@@ -159,15 +173,17 @@ function update_rule_evidence(
         c3 = rule.consequence.cell
 
         if Set([c1, c2, c3]) ⊆ m
-            rule.evidence_pos += learning_rate
-            println("Rule got positive evidence: $(rule.precondition.expr) -> $(rule.consequence.cell.item)")
-            println("New evidence: +$(rule.evidence_pos) -$(rule.evidence_neg)")
+            rule.evidence_pos += evidence_mod
+            @debug "Rule got positive evidence" rule = rule.precondition.expr consequence =
+                rule.consequence.cell.item evidence_pos = rule.evidence_pos evidence_neg =
+                rule.evidence_neg
         end
 
         if c3 ∈ M_prediction_mismatched
-            rule.evidence_neg += learning_rate
-            println("Rule got negative evidence: $(rule.precondition.expr) -> $(rule.consequence.cell.item)")
-            println("New evidence: +$(rule.evidence_pos) -$(rule.evidence_neg)")
+            rule.evidence_neg += evidence_mod
+            @debug "Rule got negative evidence" rule = rule.precondition.expr consequence =
+                rule.consequence.cell.item evidence_pos = rule.evidence_pos evidence_neg =
+                rule.evidence_neg
         end
     end
 end
@@ -203,43 +219,29 @@ function calculate_sets(previous_state::NaceState, current_state::NaceState)
     # Check if we have the required board states
     if !haskey(previous_state.context.perceived_externals, :BOARD) ||
        !haskey(current_state.context.perceived_externals, :BOARD)
-        debug_print(1, "Missing board in externals")
+        @warn "Missing board in externals"
         return M_change, M_observation_mismatched, M_prediction_mismatched
     end
 
     prev_board = previous_state.context.perceived_externals[:BOARD]
     curr_board = current_state.context.perceived_externals[:BOARD]
 
-    debug_print(3, "Board sizes - prev: $(size(prev_board)), curr: $(size(curr_board))")
-    if DEBUG_LEVEL[] >= 3
-        debug_print(3, "Previous board contents:")
-        for i ∈ 1:size(prev_board, 1)
-            row = [prev_board[i, j].item for j ∈ 1:size(prev_board, 2)]
-            debug_print(3, join(row, " "))
-        end
-        debug_print(3, "Current board contents:")
-        for i ∈ 1:size(curr_board, 1)
-            row = [curr_board[i, j].item for j ∈ 1:size(curr_board, 2)]
-            debug_print(3, join(row, " "))
-        end
-    end
-
     # Calculate changes between states
     for i ∈ 1:size(prev_board, 1), j ∈ 1:size(prev_board, 2)
         prev_cell = prev_board[i, j]
         curr_cell = curr_board[i, j]
 
-        # Consider a change if:
-        # 1. The item type changed
-        # 2. A cell became visible (changed from "unseen")
-        # 3. A cell became unseen (was visible before)
-        if prev_cell.item != curr_cell.item ||
-           (prev_cell.item == "unseen" && curr_cell.item != "unseen") ||
+        # Consider a change significant if:
+        # 1. A cell became visible (changed from "unseen" to something else)
+        # 2. A visible cell changed its type (e.g., empty to wall)
+        # 3. A visible cell became unseen (might indicate movement)
+        if (prev_cell.item == "unseen" && curr_cell.item != "unseen") ||
+           (prev_cell.item != "unseen" &&
+            curr_cell.item != "unseen" &&
+            prev_cell.item != curr_cell.item) ||
            (prev_cell.item != "unseen" && curr_cell.item == "unseen")
-            debug_print(
-                2,
-                "Change detected at ($i,$j): $(prev_cell.item) -> $(curr_cell.item)",
-            )
+            @debug "Significant change" position = (i, j) from = prev_cell.item to =
+                curr_cell.item
             push!(M_change, curr_cell)
         end
     end
@@ -248,61 +250,50 @@ function calculate_sets(previous_state::NaceState, current_state::NaceState)
     predicted_state = predict(previous_state, size(prev_board, 1), size(prev_board, 2))
     if haskey(predicted_state, :BOARD)
         predicted_board = predicted_state[:BOARD]
-        if DEBUG_LEVEL[] >= 3
-            debug_print(3, "Predicted board contents:")
-            for i ∈ 1:size(predicted_board, 1)
-                row = [predicted_board[i, j].item for j ∈ 1:size(predicted_board, 2)]
-                debug_print(3, join(row, " "))
-            end
-        end
 
         for i ∈ 1:size(curr_board, 1), j ∈ 1:size(curr_board, 2)
             pred_cell = predicted_board[i, j]
             curr_cell = curr_board[i, j]
 
-            # Consider a prediction mismatch if:
-            # 1. The predicted item is different from the current item
-            # 2. We predicted unseen but got a visible cell
-            # 3. We predicted a visible cell but got unseen
-            if pred_cell.item != curr_cell.item ||
-               (pred_cell.item == "unseen" && curr_cell.item != "unseen") ||
-               (pred_cell.item != "unseen" && curr_cell.item == "unseen")
-                debug_print(
-                    2,
-                    "Prediction mismatch at ($i,$j): predicted $(pred_cell.item), got $(curr_cell.item)",
-                )
+            # Consider a prediction mismatch significant if:
+            # 1. We predicted a specific item but got something else (both visible)
+            # 2. We predicted a visible cell but got unseen
+            # 3. We predicted unseen but got a visible cell
+            if (pred_cell.item != "unseen" &&
+                curr_cell.item != "unseen" &&
+                pred_cell.item != curr_cell.item) ||
+               (pred_cell.item != "unseen" && curr_cell.item == "unseen") ||
+               (pred_cell.item == "unseen" && curr_cell.item != "unseen")
+                @debug "Prediction mismatch" position = (i, j) predicted = pred_cell.item actual =
+                    curr_cell.item
                 push!(M_prediction_mismatched, curr_cell)
             end
         end
-    else
-        debug_print(1, "No board in predicted state")
     end
 
     # Calculate observation mismatches
     for cell ∈ M_change
         if cell in M_prediction_mismatched
-            debug_print(2, "Observation mismatch at ($(cell.x),$(cell.y))")
+            @debug "Observation mismatch" position = (cell.x, cell.y)
             push!(M_observation_mismatched, cell)
         end
     end
 
-    debug_print(
-        1,
-        "Set sizes - changes: $(length(M_change)), pred mismatches: $(length(M_prediction_mismatched)), obs mismatches: $(length(M_observation_mismatched))",
-    )
+    @info "Set sizes" changes = length(M_change) pred_mismatches =
+        length(M_prediction_mismatched) obs_mismatches = length(M_observation_mismatched)
     return M_change, M_observation_mismatched, M_prediction_mismatched
 end
 
 function hypothesize(state::NaceState)
     # Filter focus to ensure only Cells are present
     filtered_focus = Set{Cell}(filter(x -> x isa Cell, state.focus))
-    println("Focus size: $(length(filtered_focus))")
+    @info "Starting hypothesis generation" focus_size = length(filtered_focus)
 
     new_rules = Set{Rule}()
     for c ∈ filtered_focus
         # Generate new hypotheses using properly-typed Cell
         rules = new_hypotheses(state, c)
-        println("Generated $(length(rules)) rules for cell at ($(c.x),$(c.y))")
+        @debug "Generated rules for cell" position = (c.x, c.y) rule_count = length(rules)
         new_rules = union(new_rules, rules)
     end
 
@@ -321,7 +312,8 @@ function hypothesize(state::NaceState)
 
     # Filter rules
     filtered_rules = filter_rules(new_rules, rule_evidence)
-    println("Final rules - new: $(length(filtered_rules)), negative: $(length(new_negrules))")
+    @info "Hypothesis generation complete" new_rules = length(filtered_rules) negative_rules =
+        length(new_negrules)
 
     # Return updated focus (filtered), rule evidence, filtered new rules, and negative rules
     return filtered_focus, rule_evidence, filtered_rules, new_negrules
@@ -575,7 +567,7 @@ function new_hypotheses(agent_state::NaceState, c3::Cell)
 
     # Check if we have the required board states
     if !haskey(previous_externals, :BOARD) || !haskey(percv_ext, :BOARD)
-        debug_print(1, "Missing board in externals")
+        @warn "Missing board in externals"
         return new_rules
     end
 
@@ -583,15 +575,19 @@ function new_hypotheses(agent_state::NaceState, c3::Cell)
     board = percv_ext[:BOARD]
     height, width = size(board)
 
-    debug_print(
-        2,
-        "Generating hypotheses for cell at ($(c3.x),$(c3.y)) with item $(c3.item)",
-    )
-    debug_print(2, "Current action: $action")
-    debug_print(2, "Board size: $(height)x$(width)")
+    @debug "Generating hypotheses" cell_position = (c3.x, c3.y) item = c3.item action =
+        action
+
+    # Skip generating rules for persistently unseen cells
+    if c3.item == "unseen" && board_ante[c3.x, c3.y].item == "unseen"
+        @debug "Skipping persistently unseen cell"
+        return new_rules
+    end
 
     # Look at cells in a radius around the target cell
     radius = 1
+    seen_combinations = Set{Tuple{String,String,String}}()  # Track unique item combinations
+
     for i ∈ max(1, c3.x - radius):min(height, c3.x + radius)
         for j ∈ max(1, c3.y - radius):min(width, c3.y + radius)
             # Skip the cell itself
@@ -599,6 +595,9 @@ function new_hypotheses(agent_state::NaceState, c3::Cell)
 
             # First precondition cell
             c1 = board_ante[i, j]
+
+            # Skip if first cell is unseen
+            c1.item == "unseen" && continue
 
             # Look for a second cell in the radius
             for k ∈ max(1, c3.x - radius):min(height, c3.x + radius)
@@ -608,24 +607,42 @@ function new_hypotheses(agent_state::NaceState, c3::Cell)
                     (k == c3.x && l == c3.y) && continue
 
                     c2 = board_ante[k, l]
-                    debug_print(
-                        3,
-                        "Considering cells: ($(i),$(j)): $(c1.item), ($(k),$(l)): $(c2.item)",
-                    )
 
-                    # Create a rule linking these cells
-                    rule = make_rule(agent_state, :BOARD, c1, c2, c3, action)
-                    push!(new_rules, rule)
-                    debug_print(
-                        3,
-                        "Generated rule: $(rule.precondition.expr) -> $(rule.consequence.cell.item)",
-                    )
+                    # Skip if second cell is unseen
+                    c2.item == "unseen" && continue
+
+                    # Skip if we've already seen this combination of items
+                    item_combo = (c1.item, c2.item, c3.item)
+                    if item_combo in seen_combinations
+                        continue
+                    end
+                    push!(seen_combinations, item_combo)
+
+                    @debug "Considering cells" cell1_pos = (i, j) cell1_item = c1.item cell2_pos =
+                        (k, l) cell2_item = c2.item
+
+                    # Only generate rules for meaningful state changes
+                    if c3.item != c1.item || c3.item != c2.item
+                        # Create a rule linking these cells
+                        rule = make_rule(agent_state, :BOARD, c1, c2, c3, action)
+
+                        # Check if the rule is valid before adding it
+                        if is_valid_rule(rule, agent_state.rules)
+                            push!(new_rules, rule)
+                            @debug "Generated valid rule" precondition =
+                                rule.precondition.expr consequence =
+                                rule.consequence.cell.item
+                        else
+                            @debug "Invalid rule" precondition = rule.precondition.expr consequence =
+                                rule.consequence.cell.item
+                        end
+                    end
                 end
             end
         end
     end
 
-    debug_print(2, "Generated $(length(new_rules)) rules total")
+    @info "Rule generation complete" valid_rules = length(new_rules)
     return new_rules
 end
 
@@ -636,9 +653,8 @@ function cycle(state::NaceState)::NaceState
     M_change = Set{Cell}()
     M_prediction_mismatched = Set{Cell}()
 
-    debug_print(1, "\nStarting cycle at t=$(state.t)")
-    debug_print(1, "Initial focus size: $(length(state.focus))")
-    debug_print(1, "Initial rules size: $(length(state.rules))")
+    @info "Starting cycle" t = state.t focus_size = length(state.focus) rules_size =
+        length(state.rules)
 
     # Create a previous state for comparison
     previous_state = NaceState(
@@ -651,7 +667,7 @@ function cycle(state::NaceState)::NaceState
 
     # Update rule evidence based on current observations
     if !isempty(state.context.per_ext_ante)
-        debug_print(2, "Previous state exists, calculating changes...")
+        @debug "Previous state exists, calculating changes..."
         M_change, M_observation_mismatched, M_prediction_mismatched =
             calculate_sets(previous_state, state)
 
@@ -669,7 +685,7 @@ function cycle(state::NaceState)::NaceState
                     push!(M_change, board[i, j])
                 end
             end
-            debug_print(2, "Added $(length(M_change)) cells around agent to focus")
+            @debug "Added cells around agent to focus" count = length(M_change)
         end
 
         rule_memory = RuleMemory(state.rules)
@@ -680,7 +696,7 @@ function cycle(state::NaceState)::NaceState
             M_prediction_mismatched,
         )
     else
-        debug_print(1, "No previous state")
+        @debug "No previous state"
     end
 
     # Predict the next state
@@ -688,12 +704,12 @@ function cycle(state::NaceState)::NaceState
 
     # Hypothesize new rules
     try
-        debug_print(2, "Attempting to hypothesize new rules...")
+        @debug "Attempting to hypothesize new rules..."
         focus, rule_evidence, new_rules, new_negrules = hypothesize(state)
-        debug_print(1, "Hypothesized $(length(new_rules)) new rules")
-        debug_print(2, "Got $(length(new_negrules)) negative rules")
+        @info "Hypothesis generation complete" new_rules = length(new_rules) negative_rules =
+            length(new_negrules)
     catch e
-        debug_print(1, "Failed to hypothesize: $e")
+        @error "Failed to hypothesize" exception = (e, catch_backtrace())
         # If hypothesizing fails, keep existing focus and no new rules
         focus = state.focus
         new_rules = Set{Rule}()
@@ -706,7 +722,7 @@ function cycle(state::NaceState)::NaceState
             M_change,
             M_prediction_mismatched,
         )
-        debug_print(2, "Updated focus size: $(length(focus))")
+        @debug "Updated focus" size = length(focus)
     end
 
     # Plan the next actions using the improved planning system
@@ -715,13 +731,13 @@ function cycle(state::NaceState)::NaceState
 
     # Determine the next action, preferring planned actions over random ones
     action = if !isempty(planned_actions)
-        debug_print(1, "Using planned action: $(planned_actions[1])")
+        @info "Using planned action" action = planned_actions[1]
         planned_actions[1]
     else
         # If no planned actions, use the action from the best rule
         best_rule = max_truth_exp(state.rules)
         if !isnothing(best_rule)
-            debug_print(1, "Using best rule action: $(best_rule.precondition.action)")
+            @info "Using best rule action" action = best_rule.precondition.action
             best_rule.precondition.action
         else
             # Fallback to random action if no good rules exist
@@ -729,7 +745,7 @@ function cycle(state::NaceState)::NaceState
             valid_actions =
                 filter(a -> !startswith(a, "Unused"), collect(values(IDX_TO_ACTION)))
             random_action = rand(valid_actions)
-            debug_print(1, "Using random action: $random_action")
+            @info "Using random action" action = random_action
             random_action
         end
     end
@@ -856,10 +872,41 @@ end
     is_valid_rule(rule::Rule, existing_rules::Set{Rule})
 
 Check if a rule is valid and not conflicting with existing rules.
+A rule is valid if:
+
+ 1. It doesn't conflict with existing rules
+ 2. It represents a logical state transition
+ 3. It doesn't predict the same state for all cells
 """
 function is_valid_rule(rule::Rule, existing_rules::Set{Rule})
-    # For now, consider all rules valid if they don't conflict
-    !conflicting_rule_exists(rule, existing_rules)
+    # Check for conflicts with existing rules
+    if conflicting_rule_exists(rule, existing_rules)
+        return false
+    end
+
+    # Check if the rule represents a logical state transition
+    # A cell can't change from wall to lava, for example
+    immutable_items = ["wall", "lava", "goal"]
+    if rule.consequence.cell.item != rule.precondition.cell1.item &&
+       (rule.precondition.cell1.item in immutable_items ||
+        rule.consequence.cell.item in immutable_items)
+        return false
+    end
+
+    # Don't allow rules that predict the same state for everything
+    if rule.precondition.cell1.item == rule.precondition.cell2.item &&
+       rule.precondition.cell1.item == rule.consequence.cell.item
+        return false
+    end
+
+    # Don't allow rules that predict unseen unless it's a visibility transition
+    if rule.consequence.cell.item == "unseen" &&
+       (rule.precondition.cell1.item != "unseen" &&
+        rule.precondition.cell2.item != "unseen")
+        return false
+    end
+
+    return true
 end
 
 """
@@ -948,4 +995,22 @@ function bfs_with_predictor(
     end
 
     return best_actions, best_score
+end
+
+"""
+    write_rules_to_file(rules::Set{Rule}, filename::String)
+
+Write the current set of rules to a file for analysis.
+"""
+function write_rules_to_file(rules::Set{Rule}, filename::String)
+    open(filename, "w") do io
+        println(io, "Total rules: $(length(rules))")
+        println(io, "===================")
+        for rule ∈ rules
+            println(io, rule)
+            println(io, "Evidence: +$(rule.evidence_pos) -$(rule.evidence_neg)")
+            println(io, "-------------------")
+        end
+    end
+    @info "Rules written to file" filename = filename rule_count = length(rules)
 end
