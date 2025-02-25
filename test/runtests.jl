@@ -67,7 +67,7 @@ using NACE
 
         # Test string representation (format may vary slightly but should contain key elements)
         rule_str = string(rule)
-        @test occursin("Action: Move forward", rule_str)
+        @test occursin("Move forward", rule_str)
         @test occursin("Precondition:", rule_str)
         @test occursin("blue at", rule_str)
         @test occursin("green at", rule_str)

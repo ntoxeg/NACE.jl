@@ -1,36 +1,5 @@
 using Logging
-
-# Remove old debug system
-# """
-# Debug levels:
-# 0 = No debug output
-# 1 = Basic state changes and important events
-# 2 = Detailed rule generation and evidence updates
-# 3 = Very detailed cell-by-cell analysis
-# """
-# const DEBUG_LEVEL = Ref(0)
-
-# """
-#     debug_print(level::Int, msg::String)
-# 
-# Print debug message if current debug level is >= specified level.
-# """
-# function debug_print(level::Int, msg::String)
-#     if DEBUG_LEVEL[] >= level
-#         println(msg)
-#     end
-# end
-
-# Configure default logging level
-const LOG_LEVEL = Ref(Logging.Info)
-
-function set_log_level(level::LogLevel)
-    global_logger(ConsoleLogger(level))
-    LOG_LEVEL[] = level
-end
-
-# Set initial log level
-set_log_level(Logging.Info)
+global_logger(ConsoleLogger(Logging.Info))
 
 export Rule,
     rule_applicable,
@@ -95,7 +64,7 @@ end
 
 # Complete redesigned consequence
 struct Consequence
-    reward_change::Float32
+    reward::Float32
     value_tuple::ValueTuple
     cell_value::String
     value_tuple_change::ValueTuple
@@ -141,8 +110,6 @@ Create an empty state with time step zero.
 init_state() =
     NaceState(0, Set{Cell}(), Set{Rule}(), Vector{Int}(), AgentContext(Dict(), Dict(), ""))
 
-Cell(x::Int, y::Int, item) = Cell(x, y, item)
-
 function cond_match(cond1::Precondition, cond2::Precondition)
     # Check if actions match
     if cond1.action != cond2.action
@@ -186,7 +153,6 @@ function truthexp_with(cfun::Function, r::Rule)::AbstractFloat
 end
 
 confidence_count(w) = w / (w + 1)
-
 truthexp = Base.Fix1(truthexp_with, confidence_count)
 
 rule_active(r::Rule)::Bool = r.evidence_pos >= r.evidence_neg
@@ -210,7 +176,7 @@ function update_rule_memory(rulem::RuleMemory)
     for rule ∈ rulem.indeterminate_rules
         if rule.evidence_pos > rule.evidence_neg
             push!(rulem.active_rules, rule)
-        else
+        elseif rule.evidence_neg > rule.evidence_pos
             push!(rulem.inactive_rules, rule)
         end
     end
@@ -238,16 +204,14 @@ function update_rule_evidence(
             # For relative coordinates, we need the actual target cell
             target_cell = rule.consequence.target_cell
 
-            # Calculate absolute coordinates for this condition
+            # Calculate absolute coordinates for a precondition cell
             abs_x = target_cell.x + condition.x_offset
             abs_y = target_cell.y + condition.y_offset
-
-            # Create a Cell representing this condition's absolute position
             condition_cell = Cell(abs_x, abs_y, condition.value)
 
             # Check if this cell is in the changed set
             if condition_cell in m
-                rule.evidence_pos += evidence_mod / length(rule.precondition.conditions)
+                rule.evidence_pos += evidence_mod
                 @debug "Rule got positive evidence" rule = rule.precondition.expr consequence =
                     rule.consequence.cell_value evidence_pos = rule.evidence_pos evidence_neg =
                     rule.evidence_neg
@@ -337,16 +301,10 @@ function calculate_sets(previous_state::NaceState, current_state::NaceState)
                (pred_cell.item == "unseen" && curr_cell.item != "unseen")
                 @debug "Prediction mismatch" position = (i, j) predicted = pred_cell.item actual =
                     curr_cell.item
-                push!(M_prediction_mismatched, curr_cell)
+                push!(M_prediction_mismatched, pred_cell)
+                @debug "Observation mismatch" position = (curr_cell.x, curr_cell.y)
+                push!(M_observation_mismatched, curr_cell)
             end
-        end
-    end
-
-    # Calculate observation mismatches
-    for cell ∈ M_change
-        if cell in M_prediction_mismatched
-            @debug "Observation mismatch" position = (cell.x, cell.y)
-            push!(M_observation_mismatched, cell)
         end
     end
 
@@ -403,15 +361,11 @@ function Base.show(io::IO, rule::Rule)
     print(
         io,
         "Rule[\n",
-        "Action: ",
-        rule.precondition.action,
-        ",\n",
         "Precondition: ",
-        conditions_str,
+        rule.precondition,
         ",\n",
         "Consequence: ",
-        rule.consequence.cell_value,
-        " at target cell",
+        rule.consequence,
         "\nEvidence: +$(rule.evidence_pos) -$(rule.evidence_neg)",
         "\nScore: ",
         rule.score,
@@ -465,7 +419,7 @@ function Base.show(io::IO, cond::Precondition)
 end
 
 function Base.show(io::IO, c::Consequence)
-    print(io, c.cell_value, " with reward change ", c.reward_change)
+    print(io, c.cell_value, " with reward change ", c.reward)
 end
 
 """
@@ -495,8 +449,15 @@ end
 
 Calculate the match ratio of a rule for a given cell.
 """
-function rule_ratio(c::Cell, r::Rule)
-    c.item == r.consequence.cell_value ? 1.0f0 : 0.0f0
+function rule_ratio(c::Cell, r::Rule)::Float32
+    nconds = length(r.precondition.conditions)
+    n_matched_conds = 0
+    for cond ∈ r.precondition.conditions
+        if cond.value == c.item
+            n_matched_conds += 1
+        end
+    end
+    n_matched_conds / nconds
 end
 
 """
@@ -507,7 +468,7 @@ Calculate the match value of a cell.
 The match value of a cell is the maximum of rule match ratios, for all possible rules.
 If there are no rules, returns 0.0f0.
 """
-function cell_value(rs::Set{Rule}, c::Cell)
+function cell_value(rs::Set{Rule}, c::Cell)::Float32
     isempty(rs) && return 0.0f0
     maximum(map(r -> rule_ratio(c, r), collect(rs)))
 end
@@ -520,7 +481,7 @@ Calculate the match value of a state.
 The state match value is the maximum match value of all cells in the state.
 If there are no cells or rules, returns 0.0f0.
 """
-function state_value(s::NaceState)
+function state_value(s::NaceState)::Float32
     board = s.context.perceived_externals[:BOARD]
     isempty(board) && return 0.0f0
     isempty(s.rules) && return 0.0f0
@@ -578,7 +539,7 @@ end
 
 Find the rule that leads to the highest reward.
 """
-function highest_reward(rules::Set{Rule})
+function highest_reward(rules::Set{Rule})::Union{Rule,Nothing}
     isempty(rules) && return nothing
     max_rule = nothing
     max_reward = -Inf32
@@ -1049,7 +1010,7 @@ if there are no rules or if the state is empty.
 """
 function predict(state::NaceState, grid_width::Int, grid_height::Int)
     # If we have no previous state or rules, just return a copy of the current state
-    if isempty(state.context.per_ext_ante) || isempty(state.rules)
+    if isempty(state.rules)
         return deepcopy(state.context.perceived_externals)
     end
 
@@ -1059,17 +1020,14 @@ function predict(state::NaceState, grid_width::Int, grid_height::Int)
         return deepcopy(state.context.perceived_externals)
     end
 
-    per_ext_post = deepcopy(state.context.per_ext_ante)
+    per_ext_post = deepcopy(state.context.perceived_externals)
     used_rules_sumscore = 0.0f0
     used_rules_amount = 0
 
     # Get the best rules for prediction - only use rules with positive evidence
-    best_rules = filter(
-        r -> rule_active(r) && r.evidence_pos > r.evidence_neg,
-        choose_rules(state.rules),
-    )
+    best_rules = choose_rules(state.rules)
 
-    # If no good rules, try using all rules with positive evidence ratio
+    # If no good rules, try using all rules with usable truth expectation
     if isempty(best_rules)
         best_rules = filter(r -> truthexp(r) > 0.5f0, state.rules)
     end
@@ -1532,9 +1490,8 @@ function update_bird_view(state::NaceState)
     if !haskey(state.context.perceived_externals, :GLOBAL_MAP)
         # Initialize global map with a reasonable size (larger than local view)
         global_height, global_width = 20, 20
-        state.context.perceived_externals[:GLOBAL_MAP] = Matrix{Cell}([
-            Cell(j, i, "unseen") for i ∈ 1:global_height, j ∈ 1:global_width
-        ])
+        state.context.perceived_externals[:GLOBAL_MAP] =
+            Matrix{Cell}([Cell(j, i, "unseen") for i ∈ 1:global_height, j ∈ 1:global_width])
     end
 
     global_map = state.context.perceived_externals[:GLOBAL_MAP]
