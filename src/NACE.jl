@@ -8,7 +8,19 @@ export make_random_policy,
     IDX_TO_ACTION,
     ACTION_TO_IDX,
     IDX_TO_OBJECT,
-    OBJECT_TO_IDX
+    OBJECT_TO_IDX,
+    # Additional exports for the test suite
+    is_valid_rule,
+    conflicting_rule_exists,
+    Cell,
+    Rule,
+    ValueTuple,
+    RelativeCondition,
+    Precondition,
+    Consequence,
+    make_rule,
+    init_state,
+    truthexp
 
 using DataStructures
 using PyCall
@@ -55,6 +67,7 @@ function run_example_random(env)
         obs, info = env.step(action)
         println("Info: $info")
     end
+    true
 end
 
 """

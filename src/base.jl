@@ -58,7 +58,8 @@ export Rule,
     highest_reward,
     plan,
     bfs_with_predictor,
-    write_rules_to_file
+    write_rules_to_file,
+    update_bird_view
 
 struct Cell
     x::Int
@@ -72,20 +73,36 @@ mutable struct AgentContext
     act_ante::String
 end
 
+# Spatial condition with relative coordinates
+struct RelativeCondition
+    x_offset::Int
+    y_offset::Int
+    value::String
+end
+
+# Internal state values
+struct ValueTuple
+    values::Vector{Float32}
+end
+
+# Complete redesigned precondition
 struct Precondition
-    cell1::Cell
-    cell2::Cell
-    context::AgentContext
     action::String
-    expr::String
+    value_tuple::ValueTuple
+    conditions::Vector{RelativeCondition}
+    expr::String  # Keep for debugging/display
 end
 
+# Complete redesigned consequence
 struct Consequence
-    cell::Cell
-    context::AgentContext
-    reward::Float32
+    reward_change::Float32
+    value_tuple::ValueTuple
+    cell_value::String
+    value_tuple_change::ValueTuple
+    target_cell::Cell  # Keep reference to actual cell
 end
 
+# Redesigned Rule
 mutable struct Rule
     precondition::Precondition
     consequence::Consequence
@@ -127,7 +144,35 @@ init_state() =
 Cell(x::Int, y::Int, item) = Cell(x, y, item)
 
 function cond_match(cond1::Precondition, cond2::Precondition)
-    cond1.expr == cond2.expr
+    # Check if actions match
+    if cond1.action != cond2.action
+        return false
+    end
+
+    # Check if conditions match - count matches
+    if length(cond1.conditions) != length(cond2.conditions)
+        return false
+    end
+
+    # Check each condition - need to match all
+    for condition1 ∈ cond1.conditions
+        condition_found = false
+        for condition2 ∈ cond2.conditions
+            if condition1.x_offset == condition2.x_offset &&
+               condition1.y_offset == condition2.y_offset &&
+               condition1.value == condition2.value
+                condition_found = true
+                break
+            end
+        end
+
+        if !condition_found
+            return false
+        end
+    end
+
+    # All conditions matched
+    return true
 end
 
 function truthexp_with(cfun::Function, r::Rule)::AbstractFloat
@@ -156,6 +201,26 @@ struct RuleMemory
     end
 end
 
+function update_rule_memory(rulem::RuleMemory)
+    # Clear existing categorizations
+    empty!(rulem.active_rules)
+    empty!(rulem.inactive_rules)
+
+    # Categorize rules based on evidence
+    for rule ∈ rulem.indeterminate_rules
+        if rule.evidence_pos > rule.evidence_neg
+            push!(rulem.active_rules, rule)
+        else
+            push!(rulem.inactive_rules, rule)
+        end
+    end
+
+    # Remove categorized rules from indeterminate set
+    setdiff!(rulem.indeterminate_rules, union(rulem.active_rules, rulem.inactive_rules))
+
+    return rulem
+end
+
 function update_rule_evidence(
     rulem::RuleMemory,
     M_change,
@@ -168,21 +233,32 @@ function update_rule_evidence(
     @info "Updating rule evidence" total_rules = length(rules) changed_cells = length(m)
 
     for rule ∈ rules
-        c1 = rule.precondition.cell1
-        c2 = rule.precondition.cell2
-        c3 = rule.consequence.cell
+        for condition ∈ rule.precondition.conditions
+            # Check each condition relative to the target cell
+            # For relative coordinates, we need the actual target cell
+            target_cell = rule.consequence.target_cell
 
-        if Set([c1, c2, c3]) ⊆ m
-            rule.evidence_pos += evidence_mod
-            @debug "Rule got positive evidence" rule = rule.precondition.expr consequence =
-                rule.consequence.cell.item evidence_pos = rule.evidence_pos evidence_neg =
-                rule.evidence_neg
+            # Calculate absolute coordinates for this condition
+            abs_x = target_cell.x + condition.x_offset
+            abs_y = target_cell.y + condition.y_offset
+
+            # Create a Cell representing this condition's absolute position
+            condition_cell = Cell(abs_x, abs_y, condition.value)
+
+            # Check if this cell is in the changed set
+            if condition_cell in m
+                rule.evidence_pos += evidence_mod / length(rule.precondition.conditions)
+                @debug "Rule got positive evidence" rule = rule.precondition.expr consequence =
+                    rule.consequence.cell_value evidence_pos = rule.evidence_pos evidence_neg =
+                    rule.evidence_neg
+            end
         end
 
-        if c3 ∈ M_prediction_mismatched
+        # Check if the target cell had a prediction mismatch
+        if rule.consequence.target_cell ∈ M_prediction_mismatched
             rule.evidence_neg += evidence_mod
             @debug "Rule got negative evidence" rule = rule.precondition.expr consequence =
-                rule.consequence.cell.item evidence_pos = rule.evidence_pos evidence_neg =
+                rule.consequence.cell_value evidence_pos = rule.evidence_pos evidence_neg =
                 rule.evidence_neg
         end
     end
@@ -204,11 +280,6 @@ function choose_rules(rules::Set{Rule})
     end
 
     chosen_rules
-end
-
-function update_bird_view(previous_state, perceived_array)
-    # Update the bird view map based on the perceived array
-    # Implement logic to update the state
 end
 
 function calculate_sets(previous_state::NaceState, current_state::NaceState)
@@ -320,16 +391,29 @@ function hypothesize(state::NaceState)
 end
 
 function Base.show(io::IO, rule::Rule)
+    # Format conditions for display
+    conditions_str = join(
+        [
+            "$(c.value) at ($(c.x_offset),$(c.y_offset))" for
+            c ∈ rule.precondition.conditions
+        ],
+        " and ",
+    )
+
     print(
         io,
         "Rule[\n",
+        "Action: ",
+        rule.precondition.action,
+        ",\n",
         "Precondition: ",
-        rule.precondition.expr,
+        conditions_str,
         ",\n",
         "Consequence: ",
-        rule.consequence.cell.item,
-        ",\n",
-        "Score: ",
+        rule.consequence.cell_value,
+        " at target cell",
+        "\nEvidence: +$(rule.evidence_pos) -$(rule.evidence_neg)",
+        "\nScore: ",
         rule.score,
         "\n]",
     )
@@ -371,17 +455,38 @@ function format_2d_array(s::AbstractString)
     end
 end
 
-Base.show(io::IO, cond::Precondition) = print(io, cond.expr)
-
-function Base.show(io::IO, c::Consequence)
-    print(io, c.cell.item)
+function Base.show(io::IO, cond::Precondition)
+    # Format conditions for display
+    conditions_str = join(
+        ["$(c.value) at ($(c.x_offset),$(c.y_offset))" for c ∈ cond.conditions],
+        " and ",
+    )
+    print(io, "if ", conditions_str, " when action is ", cond.action)
 end
 
+function Base.show(io::IO, c::Consequence)
+    print(io, c.cell_value, " with reward change ", c.reward_change)
+end
+
+"""
+    rule_empty()
+
+Create an empty rule for initialization purposes.
+"""
 function rule_empty()
-    empty_context = AgentContext(Dict(), Dict(), "")
-    empty_state = NaceState(0, Set{Cell}(), Set{Rule}(), Vector{Int}(), empty_context)
-    precond = Precondition(Cell(0, 0, ""), Cell(0, 0, ""), empty_context, "", "empty")
-    conseq = Consequence(Cell(0, 0, ""), empty_context, 0.0f0)
+    # Create an empty relative condition
+    empty_condition = RelativeCondition(0, 0, "empty")
+
+    # Create empty value tuples
+    empty_values = ValueTuple(Float32[0.0f0])
+
+    # Create empty precondition
+    precond = Precondition("", empty_values, [empty_condition], "empty")
+
+    # Create empty consequence
+    conseq = Consequence(0.0f0, empty_values, "empty", empty_values, Cell(0, 0, "empty"))
+
+    # Create and return the empty rule
     Rule(precond, conseq, 0.0f0, 0.0f0, 0.0f0, 0.0f0)
 end
 
@@ -391,7 +496,7 @@ end
 Calculate the match ratio of a rule for a given cell.
 """
 function rule_ratio(c::Cell, r::Rule)
-    c.item == r.consequence.cell.item ? 1.0f0 : 0.0f0
+    c.item == r.consequence.cell_value ? 1.0f0 : 0.0f0
 end
 
 """
@@ -527,26 +632,51 @@ end
 function make_rule(
     agent_state::NaceState,
     param_name::Symbol,
-    cell1::Cell,
-    cell2::Cell,
-    cell3::Cell,
+    c3::Cell,  # Consequence cell
+    c1::Cell,  # Precondition cell 1
+    c2::Cell,  # Precondition cell 2
     action::String,
 )
-    local expr =
-        "if " *
-        string(cell1.item) *
-        " and " *
-        string(cell2.item) *
-        " then " *
-        string(cell3.item)
-    precondition = Precondition(cell1, cell2, agent_state.context, action, expr)
-    consequence =
-        Consequence(Cell(cell1.x, cell1.y, cell3.item), agent_state.context, 0.0f0)
-    evidence_pos = 0.0f0
-    evidence_neg = 0.0f0
-    score = 0.0f0
-    acc_score = 0.0f0
-    return Rule(precondition, consequence, evidence_pos, evidence_neg, score, acc_score)
+    # Create relative conditions
+    # Consistent (x, y) convention: x is horizontal (column), y is vertical (row)
+    # When c1 is above c3, c1.y < c3.y, and y_offset should be negative
+    # When c2 is to the left of c3, c2.x < c3.x, and x_offset should be negative
+    x1_offset = c1.x - c3.x
+    y1_offset = c1.y - c3.y
+    x2_offset = c2.x - c3.x
+    y2_offset = c2.y - c3.y
+
+    cond1 = RelativeCondition(x1_offset, y1_offset, c1.item)
+    cond2 = RelativeCondition(x2_offset, y2_offset, c2.item)
+
+    # Convert state values to float32
+    current_values = ValueTuple(convert.(Float32, copy(agent_state.values)))
+
+    # Create expression string for debugging
+    expr = "if $(c1.item) at ($(x1_offset),$(y1_offset)) and $(c2.item) at ($(x2_offset),$(y2_offset)) then $(c3.item)"
+
+    # Create precondition
+    precondition = Precondition(action, current_values, [cond1, cond2], expr)
+
+    # Estimate reward change (this would need to be learned over time)
+    reward_change = 0.0f0
+    if c3.item == "goal"
+        reward_change = 1.0f0
+    elseif c3.item == "lava"
+        reward_change = -1.0f0
+    end
+
+    # Create consequence - assume no change in values for now
+    consequence = Consequence(
+        reward_change,
+        current_values,  # Same values until we observe changes
+        c3.item,
+        ValueTuple([0.0f0]),  # Would be updated with actual observed changes
+        c3,
+    )
+
+    # Create rule
+    Rule(precondition, consequence, 0.0f0, 0.0f0, 0.0f0, 0.0f0)
 end
 
 """
@@ -588,10 +718,43 @@ function new_hypotheses(agent_state::NaceState, c3::Cell)
     radius = 1
     seen_combinations = Set{Tuple{String,String,String}}()  # Track unique item combinations
 
-    for i ∈ max(1, c3.x - radius):min(height, c3.x + radius)
-        for j ∈ max(1, c3.y - radius):min(width, c3.y + radius)
+    # Get agent position (usually in the center)
+    agent_y, agent_x = div(height, 2), div(width, 2)
+
+    # Prioritize creating rules for cells that changed
+    cell_changed = board_ante[c3.x, c3.y].item != c3.item
+
+    # If the cell is in front of the agent, it's more important
+    # Determine direction vector based on agent's orientation
+    direction = get(percv_ext, :DIR, 0)
+    dx, dy = 0, 0
+    if direction == 0  # Right
+        dx, dy = 1, 0
+    elseif direction == 1  # Down
+        dx, dy = 0, 1
+    elseif direction == 2  # Left
+        dx, dy = -1, 0
+    elseif direction == 3  # Up
+        dx, dy = 0, -1
+    end
+
+    # Check if this cell is in front of the agent
+    in_front = (c3.x == agent_x + dx && c3.y == agent_y + dy)
+
+    # Create more rules for important cells (changed or in front)
+    max_rules = if cell_changed && in_front
+        10  # More rules for important cells
+    elseif cell_changed || in_front
+        5   # Medium number for somewhat important cells
+    else
+        3   # Few rules for regular cells
+    end
+
+    rule_count = 0
+    for i ∈ max(1, c3.y - radius):min(height, c3.y + radius)
+        for j ∈ max(1, c3.x - radius):min(width, c3.x + radius)
             # Skip the cell itself
-            (i == c3.x && j == c3.y) && continue
+            (i == c3.y && j == c3.x) && continue
 
             # First precondition cell
             c1 = board_ante[i, j]
@@ -600,11 +763,14 @@ function new_hypotheses(agent_state::NaceState, c3::Cell)
             c1.item == "unseen" && continue
 
             # Look for a second cell in the radius
-            for k ∈ max(1, c3.x - radius):min(height, c3.x + radius)
-                for l ∈ max(1, c3.y - radius):min(width, c3.y + radius)
+            for k ∈ max(1, c3.y - radius):min(height, c3.y + radius)
+                for l ∈ max(1, c3.x - radius):min(width, c3.x + radius)
                     # Skip the first cell and the target cell
                     (k == i && l == j) && continue
-                    (k == c3.x && l == c3.y) && continue
+                    (k == c3.y && l == c3.x) && continue
+
+                    # Early exit if we've generated enough rules for this cell
+                    rule_count >= max_rules && return new_rules
 
                     c2 = board_ante[k, l]
 
@@ -622,19 +788,38 @@ function new_hypotheses(agent_state::NaceState, c3::Cell)
                         (k, l) cell2_item = c2.item
 
                     # Only generate rules for meaningful state changes
-                    if c3.item != c1.item || c3.item != c2.item
-                        # Create a rule linking these cells
-                        rule = make_rule(agent_state, :BOARD, c1, c2, c3, action)
+                    if c3.item != board_ante[c3.y, c3.x].item ||
+                       (c3.item != c1.item && c3.item != c2.item)
+                        # Create a rule linking these cells - updated to use new make_rule signature
+                        rule = make_rule(agent_state, :BOARD, c3, c1, c2, action)
+
+                        # Prioritize rules involving lava, goals, or walls
+                        # important_item = any(item -> item in ["lava", "goal", "wall"], 
+                        #                     [c1.item, c2.item, c3.item])
 
                         # Check if the rule is valid before adding it
                         if is_valid_rule(rule, agent_state.rules)
+                            # If this is an important rule, give it initial positive evidence
+                            # if important_item
+                            #     rule.evidence_pos += 0.1f0
+                            # end
+
                             push!(new_rules, rule)
+                            rule_count += 1
+
                             @debug "Generated valid rule" precondition =
                                 rule.precondition.expr consequence =
-                                rule.consequence.cell.item
+                                rule.consequence.cell_value
                         else
-                            @debug "Invalid rule" precondition = rule.precondition.expr consequence =
-                                rule.consequence.cell.item
+                            # Even if the rule is invalid, we should still track it as a negative rule
+                            push!(new_rules, rule)
+                            # Mark it as a negative rule with evidence
+                            # FIXME: this is not what negative rules are.
+                            # rule.evidence_neg += 0.2f0
+
+                            @debug "Generated invalid rule as negative rule" precondition =
+                                rule.precondition.expr consequence =
+                                rule.consequence.cell_value
                         end
                     end
                 end
@@ -650,10 +835,12 @@ function cycle(state::NaceState)::NaceState
     # Initialize empty sets for when we can't update rules
     focus = Set{Cell}()
     new_rules = Set{Rule}()
+    new_negative_rules = Set{Rule}()
     M_change = Set{Cell}()
     M_prediction_mismatched = Set{Cell}()
 
-    @info "Starting cycle" t = state.t focus_size = length(state.focus) rules_size =
+    @info "==== CYCLE BEGIN (t=$(state.t)) ===="
+    @info "Observer: Starting observation" focus_size = length(state.focus) rules_size =
         length(state.rules)
 
     # Create a previous state for comparison
@@ -664,6 +851,12 @@ function cycle(state::NaceState)::NaceState
         state.values,
         AgentContext(state.context.per_ext_ante, Dict(), ""),
     )
+
+    # Update global bird view map with current perception
+    if haskey(state.context.perceived_externals, :BOARD)
+        update_bird_view(state)
+        @debug "Updated global bird view map"
+    end
 
     # Update rule evidence based on current observations
     if !isempty(state.context.per_ext_ante)
@@ -689,12 +882,17 @@ function cycle(state::NaceState)::NaceState
         end
 
         rule_memory = RuleMemory(state.rules)
+        update_rule_memory(rule_memory)
+
         update_rule_evidence(
             rule_memory,
             M_change,
             M_observation_mismatched,
             M_prediction_mismatched,
         )
+
+        @info "Observer: Updated bird view map" changes = length(M_change) prediction_mismatches =
+            length(M_prediction_mismatched)
     else
         @debug "No previous state"
     end
@@ -705,14 +903,34 @@ function cycle(state::NaceState)::NaceState
     # Hypothesize new rules
     try
         @debug "Attempting to hypothesize new rules..."
-        focus, rule_evidence, new_rules, new_negrules = hypothesize(state)
-        @info "Hypothesis generation complete" new_rules = length(new_rules) negative_rules =
-            length(new_negrules)
+        focus, rule_evidence, new_rules, new_negative_rules = hypothesize(state)
+        @info "Hypothesizer: Created rules" new_rules = length(new_rules) negative_rules =
+            length(new_negative_rules)
+
+        # Log some sample rules if available
+        if !isempty(new_rules)
+            sample_rules = collect(new_rules)[1:min(3, length(new_rules))]
+            for (i, rule) ∈ enumerate(sample_rules)
+                @info "Hypothesizer: Sample rule $i" rule = rule.precondition.expr consequence =
+                    rule.consequence.cell_value
+            end
+        end
+
+        # Log some sample negative rules if available
+        if !isempty(new_negative_rules)
+            sample_neg_rules =
+                collect(new_negative_rules)[1:min(3, length(new_negative_rules))]
+            for (i, rule) ∈ enumerate(sample_neg_rules)
+                @info "Hypothesizer: Sample negative rule $i" rule = rule.precondition.expr consequence =
+                    rule.consequence.cell_value
+            end
+        end
     catch e
         @error "Failed to hypothesize" exception = (e, catch_backtrace())
         # If hypothesizing fails, keep existing focus and no new rules
         focus = state.focus
         new_rules = Set{Rule}()
+        new_negative_rules = Set{Rule}()
     end
 
     # Update focus based on prediction mismatches and changes
@@ -731,13 +949,14 @@ function cycle(state::NaceState)::NaceState
 
     # Determine the next action, preferring planned actions over random ones
     action = if !isempty(planned_actions)
-        @info "Using planned action" action = planned_actions[1]
+        @info "Planner: Using planned action sequence" actions =
+            planned_actions[1:min(3, length(planned_actions))] score = score
         planned_actions[1]
     else
         # If no planned actions, use the action from the best rule
         best_rule = max_truth_exp(state.rules)
         if !isnothing(best_rule)
-            @info "Using best rule action" action = best_rule.precondition.action
+            @info "Planner: Using best rule action" action = best_rule.precondition.action score = truthexp(best_rule)
             best_rule.precondition.action
         else
             # Fallback to random action if no good rules exist
@@ -745,8 +964,23 @@ function cycle(state::NaceState)::NaceState
             valid_actions =
                 filter(a -> !startswith(a, "Unused"), collect(values(IDX_TO_ACTION)))
             random_action = rand(valid_actions)
-            @info "Using random action" action = random_action
+            @info "Planner: Using random action" action = random_action
             random_action
+        end
+    end
+
+    # Store the rules used for prediction
+    rules_used_for_prediction = Set{Rule}()
+
+    # Add strong negative evidence to rules that contradict observations
+    for rule ∈ state.rules
+        # If rule predicts something that didn't happen
+        if rule.precondition.action == state.context.act_ante &&
+           rule.evidence_neg > rule.evidence_pos
+            # Increase negative evidence for consistently wrong predictions
+            rule.evidence_neg += 0.2f0
+            @debug "Adding negative evidence to contradicting rule" rule =
+                rule.precondition.expr
         end
     end
 
@@ -754,17 +988,54 @@ function cycle(state::NaceState)::NaceState
     for rule ∈ state.rules
         if rule.precondition.action == action
             rule.score += 0.1f0  # Small positive reinforcement for chosen action
+            if truthexp(rule) > 0.6f0  # Only use high confidence rules for prediction
+                push!(rules_used_for_prediction, rule)
+            end
+        end
+    end
+
+    @info "Predictor: Predicting next state based on action" action = action rules_used =
+        length(rules_used_for_prediction)
+
+    # If we have rules used for prediction, log a sample
+    if !isempty(rules_used_for_prediction)
+        sample_pred_rules =
+            collect(rules_used_for_prediction)[1:min(2, length(rules_used_for_prediction))]
+        for (i, rule) ∈ enumerate(sample_pred_rules)
+            @info "Predictor: Using rule $i" rule = rule.precondition.expr consequence =
+                rule.consequence.cell_value confidence = truthexp(rule)
         end
     end
 
     # Create new context with updated world state
     new_context = AgentContext(new_world, state.context.perceived_externals, action)
 
+    # Incorporate negative rules into the agent's knowledge
+    # We'll use them to directly contradict positive rules and adjust their evidence
+    for neg_rule ∈ new_negative_rules
+        for existing_rule ∈ state.rules
+            if cond_match(neg_rule.precondition, existing_rule.precondition) &&
+               neg_rule.consequence.cell_value != existing_rule.consequence.cell_value
+                # Add negative evidence to the existing rule
+                existing_rule.evidence_neg += 0.5f0
+                @debug "Applied negative rule to existing rule" existing_rule =
+                    existing_rule.precondition.expr
+            end
+        end
+    end
+
+    # Periodically write rules to file for analysis
+    if state.t % 10 == 0
+        write_rules_to_file(state.rules, "rules_output.txt")
+    end
+
+    @info "==== CYCLE END (t=$(state.t)) ===="
+
     # Return the updated state
     return NaceState(
         state.t + 1,
         focus,
-        union(state.rules, new_rules),
+        union(state.rules, new_rules),  # Don't add negative rules directly, just use them to adjust positive rules
         state.values,
         new_context,
     )
@@ -792,53 +1063,99 @@ function predict(state::NaceState, grid_width::Int, grid_height::Int)
     used_rules_sumscore = 0.0f0
     used_rules_amount = 0
 
-    # Get the best rules for prediction
-    best_rules = choose_rules(state.rules)
+    # Get the best rules for prediction - only use rules with positive evidence
+    best_rules = filter(
+        r -> rule_active(r) && r.evidence_pos > r.evidence_neg,
+        choose_rules(state.rules),
+    )
+
+    # If no good rules, try using all rules with positive evidence ratio
+    if isempty(best_rules)
+        best_rules = filter(r -> truthexp(r) > 0.5f0, state.rules)
+    end
+
+    # If still no rules, just return the existing state
     isempty(best_rules) && return per_ext_post
 
-    position_scores = Dict{Tuple{Int,Int},Any}()
-    highest_highscore = 0.0f0
+    # Helper function to check if a rule is applicable at a specific cell
+    function is_rule_applicable(rule::Rule, x::Int, y::Int, board)
+        # Skip if action doesn't match
+        if rule.precondition.action != state.context.act_ante
+            return false
+        end
 
-    # Calculate scores for each position
-    for x ∈ 1:grid_width, y ∈ 1:grid_height
-        # Safely get the cell from the board
-        cell = try
-            state.context.perceived_externals[:BOARD][x, y]
-        catch
+        # Check each condition in the rule
+        for condition ∈ rule.precondition.conditions
+            # Calculate absolute coordinates
+            abs_x = x + condition.x_offset
+            abs_y = y + condition.y_offset
+
+            # Skip if coordinates are out of bounds
+            if abs_y < 1 || abs_y > size(board, 1) || abs_x < 1 || abs_x > size(board, 2)
+                return false
+            end
+
+            # Skip if cell value doesn't match condition
+            if board[abs_y, abs_x].item != condition.value
+                return false
+            end
+        end
+
+        # All conditions matched
+        return true
+    end
+
+    # Track which cells were predicted with which rules
+    predictions = Dict{Tuple{Int,Int},Vector{Tuple{Rule,Float32}}}()
+
+    # First pass: gather all possible predictions for each cell
+    board = state.context.perceived_externals[:BOARD]
+    for y ∈ 1:grid_height, x ∈ 1:grid_width
+        # Skip if coordinates are out of bounds
+        if y > size(board, 1) || x > size(board, 2)
             continue
         end
 
-        scores = Dict{Rule,Float32}()
-        highscore = 0.0f0
-        highscore_rule = rule_empty()
+        predictions[(y, x)] = Tuple{Rule,Float32}[]
 
         for rule ∈ best_rules
-            # Calculate rule applicability score
-            score = rule_ratio(cell, rule)
-            if score > 0.0f0
-                scores[rule] = score
-                if score > highscore
-                    highscore = score
-                    highscore_rule = rule
+            # Check if rule is applicable at this cell
+            if is_rule_applicable(rule, x, y, board)
+                # Calculate confidence score
+                confidence = truthexp(rule)
+
+                # Only use rules with reasonable confidence
+                if confidence > 0.5f0
+                    push!(predictions[(y, x)], (rule, confidence))
                 end
             end
         end
 
-        position_scores[(x, y)] = (scores, highscore, highscore_rule)
-        highest_highscore = max(highest_highscore, highscore)
+        # Sort predictions by confidence
+        sort!(predictions[(y, x)], by=p -> -p[2])
     end
 
-    # Apply the best rules to predict the next state
-    for (pos, (scores, highscore, rule::Rule)) ∈ position_scores
-        if !isnothing(rule) && rule_applicable(state_value(state), get(scores, rule, 0.0f0))
-            x, y = pos
-            try
-                per_ext_post[:BOARD][x, y] = rule.consequence.cell
-                used_rules_sumscore += rule.score
-                used_rules_amount += 1
-            catch
-                continue
-            end
+    # Second pass: apply the best predictions
+    for (pos, preds) ∈ predictions
+        if isempty(preds)
+            continue
+        end
+
+        y, x = pos
+
+        # Use the highest confidence prediction
+        best_rule, confidence = preds[1]
+
+        try
+            # Update the cell with the predicted value
+            per_ext_post[:BOARD][y, x] = Cell(x, y, best_rule.consequence.cell_value)
+            used_rules_sumscore += best_rule.score
+            used_rules_amount += 1
+            @debug "Applied prediction rule" position = (x, y) rule =
+                best_rule.precondition.expr confidence = confidence
+        catch e
+            @debug "Failed to apply rule at position" position = (x, y) error = e
+            continue
         end
     end
 
@@ -881,29 +1198,81 @@ A rule is valid if:
 function is_valid_rule(rule::Rule, existing_rules::Set{Rule})
     # Check for conflicts with existing rules
     if conflicting_rule_exists(rule, existing_rules)
+        @debug "Rule conflicts with existing rule" rule = rule.precondition.expr
         return false
     end
 
     # Check if the rule represents a logical state transition
-    # A cell can't change from wall to lava, for example
+    # Some items can't change (like walls and lava)
     immutable_items = ["wall", "lava", "goal"]
-    if rule.consequence.cell.item != rule.precondition.cell1.item &&
-       (rule.precondition.cell1.item in immutable_items ||
-        rule.consequence.cell.item in immutable_items)
+
+    # Get cells from the rule
+    target_item = rule.consequence.cell_value
+
+    # Rules that predict walls/lava/goals appearing or disappearing are invalid
+    # Need to check if any of the precondition cells are these immutable items
+    is_immutable_change = false
+    for condition ∈ rule.precondition.conditions
+        if condition.x_offset == 0 && condition.y_offset == 0
+            # This condition is for the target cell itself
+            if condition.value != target_item &&
+               (condition.value in immutable_items || target_item in immutable_items)
+                is_immutable_change = true
+                break
+            end
+        end
+    end
+
+    if is_immutable_change
+        @debug "Rule predicts invalid state transition" to = target_item
         return false
     end
 
     # Don't allow rules that predict the same state for everything
-    if rule.precondition.cell1.item == rule.precondition.cell2.item &&
-       rule.precondition.cell1.item == rule.consequence.cell.item
+    # (e.g., "if empty and empty then empty" is not useful)
+    if length(rule.precondition.conditions) >= 2 &&
+       all(
+           c -> c.value == rule.precondition.conditions[1].value,
+           rule.precondition.conditions,
+       ) &&
+       rule.precondition.conditions[1].value == target_item
+        @debug "Rule predicts same state for everything" state = target_item
         return false
     end
 
-    # Don't allow rules that predict unseen unless it's a visibility transition
-    if rule.consequence.cell.item == "unseen" &&
-       (rule.precondition.cell1.item != "unseen" &&
-        rule.precondition.cell2.item != "unseen")
+    # Rules should be directional - the action should matter
+    if isempty(rule.precondition.action)
+        @debug "Rule has no action"
         return false
+    end
+
+    # Invisible cells need special handling
+    # Don't allow rules that predict unseen cells unless it's a visibility transition
+    if target_item == "unseen" &&
+       !any(c -> c.value == "unseen", rule.precondition.conditions)
+        @debug "Invalid rule predicting unseen cells"
+        return false
+    end
+
+    # Special handling for actions
+    # If the action is movement, make sure the rule makes sense spatially
+    if rule.precondition.action == "Move forward"
+        # For movement rules, check that conditions have reasonable spatial relationships
+        # This is a simplification that could be improved
+        has_adjacent_condition = false
+        for condition ∈ rule.precondition.conditions
+            # Check if any condition is adjacent to target (offset of 1 in any direction)
+            if (abs(condition.x_offset) <= 1 && abs(condition.y_offset) <= 1) &&
+               !(condition.x_offset == 0 && condition.y_offset == 0)
+                has_adjacent_condition = true
+                break
+            end
+        end
+
+        if !has_adjacent_condition
+            @debug "Movement rule with no adjacent cells"
+            return false
+        end
     end
 
     return true
@@ -913,11 +1282,43 @@ end
     conflicting_rule_exists(rule::Rule, rules::Set{Rule})
 
 Check if there exists a conflicting rule in the set.
+A rule conflicts if it has the same preconditions and action but predicts a different consequence.
 """
 function conflicting_rule_exists(rule::Rule, rules::Set{Rule})
     for existing_rule ∈ rules
-        if cond_match(rule.precondition, existing_rule.precondition) &&
-           rule.consequence.cell.item != existing_rule.consequence.cell.item
+        # Check if actions match
+        if rule.precondition.action != existing_rule.precondition.action
+            continue
+        end
+
+        # Check if conditions match - count matches
+        if length(rule.precondition.conditions) !=
+           length(existing_rule.precondition.conditions)
+            continue
+        end
+
+        # Check each condition - need to match all
+        conditions_match = true
+        for cond1 ∈ rule.precondition.conditions
+            condition_found = false
+            for cond2 ∈ existing_rule.precondition.conditions
+                if cond1.x_offset == cond2.x_offset &&
+                   cond1.y_offset == cond2.y_offset &&
+                   cond1.value == cond2.value
+                    condition_found = true
+                    break
+                end
+            end
+
+            if !condition_found
+                conditions_match = false
+                break
+            end
+        end
+
+        # If all conditions match but consequence differs, it's a conflict
+        if conditions_match &&
+           rule.consequence.cell_value != existing_rule.consequence.cell_value
             return true
         end
     end
@@ -961,14 +1362,67 @@ function bfs_with_predictor(
     best_score = -Inf32
     best_actions = String[]
 
+    # Check if we have access to value information
+    has_values = !isempty(state.values)
+
+    # Keep track of visited states to avoid cycles
+    visited_states = Set{String}()
+
+    # Helper function to create a hash for a state
+    function state_hash(state::NaceState)
+        if haskey(state.context.perceived_externals, :BOARD)
+            board = state.context.perceived_externals[:BOARD]
+            # Create a string representation of the board
+            return join([cell.item for cell ∈ vec(board)], "")
+        end
+        return "no_board"
+    end
+
     while !isempty(queue) && length(queue) < max_queue_len
         current_state, action_seq, current_score = popfirst!(queue)
 
         # If we've reached max depth, skip this branch
         length(action_seq) >= max_depth && continue
 
+        # Create a hash for this state
+        state_key = state_hash(current_state) * join(action_seq, "")
+
+        # Skip if we've visited this state already
+        if state_key in visited_states
+            continue
+        end
+        push!(visited_states, state_key)
+
+        # Check for goal states - add a bonus for reaching a goal
+        goal_bonus = 0.0f0
+        if haskey(current_state.context.perceived_externals, :BOARD)
+            board = current_state.context.perceived_externals[:BOARD]
+            for cell ∈ vec(board)
+                if cell.item == "goal"
+                    goal_bonus += 10.0f0  # Big bonus for finding a goal
+                    @debug "Found goal in planning!" position = (cell.x, cell.y)
+                elseif cell.item == "lava"
+                    goal_bonus -= 5.0f0  # Penalty for being near lava
+                    @debug "Found lava in planning!" position = (cell.x, cell.y)
+                end
+            end
+        end
+
         # Try each possible action
         for action ∈ actions
+            # Skip action sequences with repeated actions
+            if !isempty(action_seq) &&
+               last(action_seq) == string(action) &&
+               action != "Move forward"
+                continue  # Skip repeated turning actions
+            end
+
+            # Extra weight for forward movement to encourage exploration
+            movement_bonus = action == "Move forward" ? 0.2f0 : 0.0f0
+
+            # Small penalty for repeated turns to discourage spinning
+            turn_penalty = action ∈ ["Turn left", "Turn right"] ? 0.1f0 : 0.0f0
+
             # Create a copy of the state and apply the action
             next_state = deepcopy(current_state)
             next_state.context.act_ante = string(action)
@@ -978,19 +1432,42 @@ function bfs_with_predictor(
             next_state.context.perceived_externals = predicted_world
 
             # Calculate score for this state
-            score = state_value(next_state)
-            total_score = current_score + score
+            # Base score is the state value
+            base_score = state_value(next_state)
+
+            # Add rewards from values (if available)
+            value_score = 0.0f0
+            if has_values && !isempty(next_state.values)
+                value_score = sum(next_state.values) / length(next_state.values)
+            end
+
+            # Combine scores with appropriate weights
+            total_score =
+                current_score +
+                (0.5f0 * base_score) +
+                (1.0f0 * value_score) +
+                goal_bonus +
+                movement_bonus - turn_penalty
 
             # Update best score if this is better
             if total_score > best_score
                 best_score = total_score
                 best_actions = vcat(action_seq, [string(action)])
+                @debug "New best plan" actions = best_actions score = best_score
             end
 
             # Add to queue if not at max depth
             if length(action_seq) < max_depth - 1
                 push!(queue, (next_state, vcat(action_seq, [string(action)]), total_score))
             end
+        end
+
+        # Sort the queue by score (best first)
+        sort!(queue, by=x -> -x[3])
+
+        # Trim queue if it gets too large
+        if length(queue) > max_queue_len ÷ 2
+            queue = queue[1:max_queue_len÷2]
         end
     end
 
@@ -1006,11 +1483,92 @@ function write_rules_to_file(rules::Set{Rule}, filename::String)
     open(filename, "w") do io
         println(io, "Total rules: $(length(rules))")
         println(io, "===================")
+
+        # Group rules by action
+        action_groups = Dict{String,Vector{Rule}}()
         for rule ∈ rules
-            println(io, rule)
-            println(io, "Evidence: +$(rule.evidence_pos) -$(rule.evidence_neg)")
+            action = rule.precondition.action
+            if !haskey(action_groups, action)
+                action_groups[action] = Vector{Rule}()
+            end
+            push!(action_groups[action], rule)
+        end
+
+        # Print rules by action groups
+        for (action, group_rules) ∈ action_groups
+            println(io, "Action: $action ($(length(group_rules)) rules)")
             println(io, "-------------------")
+
+            # Sort rules by evidence
+            sort!(group_rules, by=r -> -(r.evidence_pos - r.evidence_neg))
+
+            for (i, rule) ∈ enumerate(group_rules)
+                println(io, "[$i] $rule")
+                println(io, "Truth expectation: $(truthexp(rule))")
+                println(io, "-------------------")
+            end
+            println(io)
         end
     end
     @info "Rules written to file" filename = filename rule_count = length(rules)
+end
+
+"""
+    update_bird_view(state::NaceState)
+
+Update the global bird's eye view map based on the current perception.
+This maintains a persistent global map of the environment by combining observations.
+"""
+function update_bird_view(state::NaceState)
+    # Check if we have the required board states
+    if !haskey(state.context.perceived_externals, :BOARD)
+        @warn "Missing board in externals"
+        return state.context.perceived_externals
+    end
+
+    board = state.context.perceived_externals[:BOARD]
+
+    # Get or create global map
+    if !haskey(state.context.perceived_externals, :GLOBAL_MAP)
+        # Initialize global map with a reasonable size (larger than local view)
+        global_height, global_width = 20, 20
+        state.context.perceived_externals[:GLOBAL_MAP] = Matrix{Cell}([
+            Cell(j, i, "unseen") for i ∈ 1:global_height, j ∈ 1:global_width
+        ])
+    end
+
+    global_map = state.context.perceived_externals[:GLOBAL_MAP]
+
+    # Get agent position and direction
+    height, width = size(board)
+    agent_y, agent_x = div(height, 2), div(width, 2)
+    direction = get(state.context.perceived_externals, :DIR, 0)
+
+    # Calculate global center position (where agent is located)
+    # Assume global map center is at (10, 10) for simplicity
+    global_center_y, global_center_x = 10, 10
+
+    # Update global map based on current perception
+    for i ∈ 1:size(board, 1), j ∈ 1:size(board, 2)
+        # Calculate relative position to agent
+        rel_y = i - agent_y
+        rel_x = j - agent_x
+
+        # Convert to global coordinates
+        global_y = global_center_y + rel_y
+        global_x = global_center_x + rel_x
+
+        # Check if global coordinates are valid
+        if 1 <= global_y <= size(global_map, 1) && 1 <= global_x <= size(global_map, 2)
+            # Only update if cell is visible (not "unseen")
+            if board[i, j].item != "unseen"
+                global_map[global_y, global_x] = Cell(global_x, global_y, board[i, j].item)
+            end
+        end
+    end
+
+    # Log the update
+    @debug "Updated global bird view map" size = size(global_map)
+
+    return state.context.perceived_externals
 end

@@ -36,3 +36,4 @@ poetry.lock
 
 .envrc
 rules_output.txt
+output-rules-test.txt
