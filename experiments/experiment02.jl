@@ -2,33 +2,35 @@ using NACE
 env = NACE.gym.make("MiniGrid-LavaCrossingS11N5-v0", render_mode="human")
 
 """
-Actions available in minigrid environments
-"""
-IDX_TO_ACTION = Dict(
-    0 => "Turn left",
-    1 => "Turn right",
-    2 => "Move forward",
-    3 => "Unused",
-    4 => "Unused",
-    5 => "Unused",
-    6 => "Unused",
-)
-ACTION_TO_IDX = Dict(value => key for (key, value) ∈ IDX_TO_ACTION)
-
-"""
-    run_example(env)
+    run_example(env, steps::Int)
 
 Run an example on an environment.
 """
-function run_example(env)
+function run_example(env, steps::Int)
     obs, info = env.reset()
     agent = NaceAgent(init_state(), nace_policy, nace_perceptor, nace_effector)
-    for _ ∈ 1:10
+    
+    # Output initial state information
+    @info "Starting experiment" environment="MiniGrid-LavaCrossingS11N5-v0" steps=steps
+    
+    # Run for the specified number of steps
+    for step ∈ 1:steps
         action = agent(obs)
-        println("Action: $(IDX_TO_ACTION[action])")
+        @info "Step $step" action = IDX_TO_ACTION[action]
         obs, info = env.step(action)
-        println("Current rules: $(agent.state.rules)")
+        @debug "Step info" info = info
+        
+        # Periodically report on rules learned
+        if step % 10 == 0
+            num_rules = length(agent.state.rules)
+            @info "Agent progress" step=step rules_count=num_rules
+        end
     end
+    
+    # Write final rules to file for analysis
+    rules_file = "output-rules-ex02.txt"
+    write_rules_to_file(agent.state.rules, rules_file)
+    @info "Experiment complete" total_steps=steps total_rules=length(agent.state.rules) rules_file=rules_file
 end
 
-run_example(env)
+run_example(env, 100)
