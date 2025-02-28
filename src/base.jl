@@ -262,9 +262,9 @@ function calculate_sets(previous_state::NaceState, current_state::NaceState)
     curr_board = current_state.context.perceived_externals[:BOARD]
 
     # Calculate changes between states
-    for i ∈ 1:size(prev_board, 1), j ∈ 1:size(prev_board, 2)
-        prev_cell = prev_board[i, j]
-        curr_cell = curr_board[i, j]
+    for I ∈ CartesianIndices(prev_board)
+        prev_cell = prev_board[I]
+        curr_cell = curr_board[I]
 
         # Consider a change significant if:
         # 1. A cell became visible (changed from "unseen" to something else)
@@ -275,7 +275,7 @@ function calculate_sets(previous_state::NaceState, current_state::NaceState)
             curr_cell.item != "unseen" &&
             prev_cell.item != curr_cell.item) ||
            (prev_cell.item != "unseen" && curr_cell.item == "unseen")
-            @debug "Significant change" position = (i, j) from = prev_cell.item to =
+            @debug "Significant change" position = (I[2], I[1]) from = prev_cell.item to =
                 curr_cell.item
             push!(M_change, curr_cell)
         end
@@ -286,9 +286,9 @@ function calculate_sets(previous_state::NaceState, current_state::NaceState)
     if haskey(predicted_state, :BOARD)
         predicted_board = predicted_state[:BOARD]
 
-        for i ∈ 1:size(curr_board, 1), j ∈ 1:size(curr_board, 2)
-            pred_cell = predicted_board[i, j]
-            curr_cell = curr_board[i, j]
+        for I ∈ CartesianIndices(curr_board)
+            pred_cell = predicted_board[I]
+            curr_cell = curr_board[I]
 
             # Consider a prediction mismatch significant if:
             # 1. We predicted a specific item but got something else (both visible)
@@ -299,8 +299,8 @@ function calculate_sets(previous_state::NaceState, current_state::NaceState)
                 pred_cell.item != curr_cell.item) ||
                (pred_cell.item != "unseen" && curr_cell.item == "unseen") ||
                (pred_cell.item == "unseen" && curr_cell.item != "unseen")
-                @debug "Prediction mismatch" position = (i, j) predicted = pred_cell.item actual =
-                    curr_cell.item
+                @debug "Prediction mismatch" position = (I[2], I[1]) predicted =
+                    pred_cell.item actual = curr_cell.item
                 push!(M_prediction_mismatched, pred_cell)
                 @debug "Observation mismatch" position = (curr_cell.x, curr_cell.y)
                 push!(M_observation_mismatched, curr_cell)
@@ -745,8 +745,8 @@ function new_hypotheses(agent_state::NaceState, c3::Cell)
                     end
                     push!(seen_combinations, item_combo)
 
-                    @debug "Considering cells" cell1_pos = (i, j) cell1_item = c1.item cell2_pos =
-                        (k, l) cell2_item = c2.item
+                    @debug "Considering cells" cell1_pos = (j, i) cell1_item = c1.item cell2_pos =
+                        (l, k) cell2_item = c2.item
 
                     # Only generate rules for meaningful state changes
                     if c3.item != board_ante[c3.y, c3.x].item ||
@@ -836,7 +836,7 @@ function cycle(state::NaceState)::NaceState
             # Add cells around agent to focus
             for i ∈ max(1, agent_x - radius):min(height, agent_x + radius)
                 for j ∈ max(1, agent_y - radius):min(width, agent_y + radius)
-                    push!(M_change, board[i, j])
+                    push!(M_change, board[j, i])
                 end
             end
             @debug "Added cells around agent to focus" count = length(M_change)
@@ -1506,10 +1506,10 @@ function update_bird_view(state::NaceState)
     global_center_y, global_center_x = 10, 10
 
     # Update global map based on current perception
-    for i ∈ 1:size(board, 1), j ∈ 1:size(board, 2)
+    for I ∈ CartesianIndices(board)
         # Calculate relative position to agent
-        rel_y = i - agent_y
-        rel_x = j - agent_x
+        rel_y = I[1] - agent_y
+        rel_x = I[2] - agent_x
 
         # Convert to global coordinates
         global_y = global_center_y + rel_y
@@ -1518,8 +1518,8 @@ function update_bird_view(state::NaceState)
         # Check if global coordinates are valid
         if 1 <= global_y <= size(global_map, 1) && 1 <= global_x <= size(global_map, 2)
             # Only update if cell is visible (not "unseen")
-            if board[i, j].item != "unseen"
-                global_map[global_y, global_x] = Cell(global_x, global_y, board[i, j].item)
+            if board[I].item != "unseen"
+                global_map[global_y, global_x] = Cell(global_x, global_y, board[I].item)
             end
         end
     end

@@ -118,7 +118,7 @@ function nace_perceptor(obs)
     try
         objects = map(i -> IDX_TO_OBJECT[i], obs["image"][:, :, 1])
         board = reshape(
-            [Cell(idx[1], idx[2], objects[idx]) for idx ∈ CartesianIndices(objects)],
+            [Cell(idx[2], idx[1], objects[idx]) for idx ∈ CartesianIndices(objects)],
             size(objects),
         )
         values = map(obj -> obj == "goal" ? 1 : (obj == "lava" ? -1 : 0), vec(objects))
