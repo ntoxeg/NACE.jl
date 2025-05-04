@@ -16,7 +16,7 @@ export Rule,
     hypothesize,
     new_hypotheses,
     cycle,
-    AgentContext,
+    Memory,
     Precondition,
     Consequence,
     RuleMemory,
@@ -36,11 +36,34 @@ struct Cell
     item::String
 end
 
-mutable struct AgentContext
-    perceived_externals::Dict
-    per_ext_ante::Dict
+@enum Direction NORTH SOUTH EAST WEST
+
+struct EpisodicMemory
+    board::Matrix{Cell}
+    direction::Direction
+    data::Dict{Symbol,Any}  # Add dictionary for storing additional data
+end
+
+# Update constructor to initialize empty data
+EpisodicMemory(board::Matrix{Cell}, direction::Direction) =
+    EpisodicMemory(board, direction, Dict{Symbol,Any}())
+
+mutable struct Memory
+    episodic_current::EpisodicMemory
+    episodic_antecedant::EpisodicMemory
     act_ante::String
 end
+
+# Add getindex method for EpisodicMemory
+Base.getindex(em::EpisodicMemory, key::Symbol) = get(em.data, key, nothing)
+Base.setindex!(em::EpisodicMemory, value, key::Symbol) = em.data[key] = value
+Base.haskey(em::EpisodicMemory, key::Symbol) = haskey(em.data, key)
+
+# Add iteration methods for EpisodicMemory
+Base.iterate(em::EpisodicMemory) = iterate(em.data)
+Base.iterate(em::EpisodicMemory, state) = iterate(em.data, state)
+Base.isempty(em::EpisodicMemory) = isempty(em.data) && isempty(em.board)
+Base.length(em::EpisodicMemory) = length(em.data) + length(em.board)
 
 # Spatial condition with relative coordinates
 struct RelativeCondition
@@ -49,12 +72,11 @@ struct RelativeCondition
     value::String
 end
 
-# Internal state values
+# Internal state values (based of off the paper)
 struct ValueTuple
     values::Vector{Float32}
 end
 
-# Complete redesigned precondition
 struct Precondition
     action::String
     value_tuple::ValueTuple
@@ -62,16 +84,14 @@ struct Precondition
     expr::String  # Keep for debugging/display
 end
 
-# Complete redesigned consequence
 struct Consequence
     reward::Float32
     value_tuple::ValueTuple
     cell_value::String
     value_tuple_change::ValueTuple
-    target_cell::Cell  # Keep reference to actual cell
+    target_cell::Cell  # Keep reference to the actual cell
 end
 
-# Redesigned Rule
 mutable struct Rule
     precondition::Precondition
     consequence::Consequence
@@ -92,14 +112,14 @@ Agent state structure
   - `focus` :: Set{Cell}: Set of objects the agent is currently focused on.
   - `rules` :: Set{Rule}: Set of rules that the agent currently believes.
   - `values` :: Vector{Int}: Vector of values associated with the agent's state.
-  - `context` :: AgentContext: Contains perceived externals, previous state and action.
+  - `memory` :: Memory: Contains perceived externals, previous state and action.
 """
 struct NaceState
     t::Int
     focus::Set{Cell}
     rules::Set{Rule}
     values::Vector{Int}
-    context::AgentContext
+    memory::Memory
 end
 
 """
@@ -107,8 +127,17 @@ end
 
 Create an empty state with time step zero.
 """
-init_state() =
-    NaceState(0, Set{Cell}(), Set{Rule}(), Vector{Int}(), AgentContext(Dict(), Dict(), ""))
+init_state() = NaceState(
+    0,
+    Set{Cell}(),
+    Set{Rule}(),
+    Vector{Int}(),
+    Memory(
+        EpisodicMemory(Matrix{Cell}(undef, 0, 0), Direction(0)),
+        EpisodicMemory(Matrix{Cell}(undef, 0, 0), Direction(0)),
+        "",
+    ),
+)
 
 function cond_match(cond1::Precondition, cond2::Precondition)
     # Check if actions match
@@ -252,14 +281,14 @@ function calculate_sets(previous_state::NaceState, current_state::NaceState)
     M_prediction_mismatched = Set{Cell}()
 
     # Check if we have the required board states
-    if !haskey(previous_state.context.perceived_externals, :BOARD) ||
-       !haskey(current_state.context.perceived_externals, :BOARD)
+    if isempty(previous_state.memory.episodic_current.board) ||
+       isempty(current_state.memory.episodic_current.board)
         @warn "Missing board in externals"
         return M_change, M_observation_mismatched, M_prediction_mismatched
     end
 
-    prev_board = previous_state.context.perceived_externals[:BOARD]
-    curr_board = current_state.context.perceived_externals[:BOARD]
+    prev_board = previous_state.memory.episodic_current.board
+    curr_board = current_state.memory.episodic_current.board
 
     # Calculate changes between states
     for I ∈ CartesianIndices(prev_board)
@@ -482,7 +511,7 @@ The state match value is the maximum match value of all cells in the state.
 If there are no cells or rules, returns 0.0f0.
 """
 function state_value(s::NaceState)::Float32
-    board = s.context.perceived_externals[:BOARD]
+    board = s.memory.episodic_current.board
     isempty(board) && return 0.0f0
     isempty(s.rules) && return 0.0f0
     maximum(map(c -> cell_value(s.rules, c), collect(board)))
@@ -651,19 +680,19 @@ Generate new hypotheses for a given cell by looking at its neighborhood.
   - c3: the cell to be used for the consequence
 """
 function new_hypotheses(agent_state::NaceState, c3::Cell)
-    percv_ext = agent_state.context.perceived_externals
-    previous_externals = agent_state.context.per_ext_ante
-    action = agent_state.context.act_ante
+    percv_ext = agent_state.memory.episodic_current
+    previous_externals = agent_state.memory.episodic_antecedant
+    action = agent_state.memory.act_ante
     new_rules = Set{Rule}()
 
     # Check if we have the required board states
-    if !haskey(previous_externals, :BOARD) || !haskey(percv_ext, :BOARD)
+    if isempty(previous_externals.board) || isempty(percv_ext.board)
         @warn "Missing board in externals"
         return new_rules
     end
 
-    board_ante = previous_externals[:BOARD]
-    board = percv_ext[:BOARD]
+    board_ante = previous_externals.board
+    board = percv_ext.board
     height, width = size(board)
 
     @debug "Generating hypotheses" cell_position = (c3.x, c3.y) item = c3.item action =
@@ -687,7 +716,7 @@ function new_hypotheses(agent_state::NaceState, c3::Cell)
 
     # If the cell is in front of the agent, it's more important
     # Determine direction vector based on agent's orientation
-    direction = get(percv_ext, :DIR, 0)
+    direction = percv_ext.direction
     dx, dy = 0, 0
     if direction == 0  # Right
         dx, dy = 1, 0
@@ -810,53 +839,51 @@ function cycle(state::NaceState)::NaceState
         state.focus,
         state.rules,
         state.values,
-        AgentContext(state.context.per_ext_ante, Dict(), ""),
+        Memory(
+            state.memory.episodic_antecedant,
+            EpisodicMemory(Matrix{Cell}(undef, 0, 0), Direction(0)),
+            "",
+        ),
     )
 
     # Update global bird view map with current perception
-    if haskey(state.context.perceived_externals, :BOARD)
-        update_bird_view(state)
-        @debug "Updated global bird view map"
-    end
+    # if haskey(state.memory.episodic_current, :BOARD)
+    #     update_bird_view(state)
+    #     @debug "Updated global bird view map"
+    # end
 
     # Update rule evidence based on current observations
-    if !isempty(state.context.per_ext_ante)
-        @debug "Previous state exists, calculating changes..."
-        M_change, M_observation_mismatched, M_prediction_mismatched =
-            calculate_sets(previous_state, state)
+    @debug "Previous state exists, calculating changes..."
+    M_change, M_observation_mismatched, M_prediction_mismatched =
+        calculate_sets(previous_state, state)
 
-        # Add cells around the agent's current position to focus
-        if haskey(state.context.perceived_externals, :BOARD)
-            board = state.context.perceived_externals[:BOARD]
-            height, width = size(board)
-            # Find agent position (usually in the center of view)
-            agent_x, agent_y = div(height, 2), div(width, 2)
-            radius = 1
+    # Add cells around the agent's current position to focus
+    board = state.memory.episodic_current.board
+    height, width = size(board)
+    # Find agent position (usually in the center of view)
+    agent_x, agent_y = div(height, 2), div(width, 2)
+    radius = 1
 
-            # Add cells around agent to focus
-            for i ∈ max(1, agent_x - radius):min(height, agent_x + radius)
-                for j ∈ max(1, agent_y - radius):min(width, agent_y + radius)
-                    push!(M_change, board[j, i])
-                end
-            end
-            @debug "Added cells around agent to focus" count = length(M_change)
+    # Add cells around agent to focus
+    for i ∈ max(1, agent_x - radius):min(height, agent_x + radius)
+        for j ∈ max(1, agent_y - radius):min(width, agent_y + radius)
+            push!(M_change, board[j, i])
         end
-
-        rule_memory = RuleMemory(state.rules)
-        update_rule_memory(rule_memory)
-
-        update_rule_evidence(
-            rule_memory,
-            M_change,
-            M_observation_mismatched,
-            M_prediction_mismatched,
-        )
-
-        @info "Observer: Updated bird view map" changes = length(M_change) prediction_mismatches =
-            length(M_prediction_mismatched)
-    else
-        @debug "No previous state"
     end
+    @debug "Added cells around agent to focus" count = length(M_change)
+
+    rule_memory = RuleMemory(state.rules)
+    update_rule_memory(rule_memory)
+
+    update_rule_evidence(
+        rule_memory,
+        M_change,
+        M_observation_mismatched,
+        M_prediction_mismatched,
+    )
+
+    @info "Observer: Updated bird view map" changes = length(M_change) prediction_mismatches =
+        length(M_prediction_mismatched)
 
     # Predict the next state
     new_world = predict(state, 7, 7)
@@ -895,7 +922,7 @@ function cycle(state::NaceState)::NaceState
     end
 
     # Update focus based on prediction mismatches and changes
-    if !isempty(state.context.per_ext_ante)
+    if !isempty(state.memory.episodic_antecedant)
         focus = union(
             Set{Cell}(filter(x -> x isa Cell, state.focus)),
             M_change,
@@ -936,7 +963,7 @@ function cycle(state::NaceState)::NaceState
     # Add strong negative evidence to rules that contradict observations
     for rule ∈ state.rules
         # If rule predicts something that didn't happen
-        if rule.precondition.action == state.context.act_ante &&
+        if rule.precondition.action == state.memory.act_ante &&
            rule.evidence_neg > rule.evidence_pos
             # Increase negative evidence for consistently wrong predictions
             rule.evidence_neg += 0.2f0
@@ -969,7 +996,7 @@ function cycle(state::NaceState)::NaceState
     end
 
     # Create new context with updated world state
-    new_context = AgentContext(new_world, state.context.perceived_externals, action)
+    new_memory = Memory(new_world, state.memory.episodic_current, action)
 
     # Incorporate negative rules into the agent's knowledge
     # We'll use them to directly contradict positive rules and adjust their evidence
@@ -998,7 +1025,7 @@ function cycle(state::NaceState)::NaceState
         focus,
         union(state.rules, new_rules),  # Don't add negative rules directly, just use them to adjust positive rules
         state.values,
-        new_context,
+        new_memory,
     )
 end
 
@@ -1011,16 +1038,16 @@ if there are no rules or if the state is empty.
 function predict(state::NaceState, grid_width::Int, grid_height::Int)
     # If we have no previous state or rules, just return a copy of the current state
     if isempty(state.rules)
-        return deepcopy(state.context.perceived_externals)
+        return deepcopy(state.memory.episodic_current)
     end
 
     # Check if BOARD exists in the dictionaries
-    if !haskey(state.context.per_ext_ante, :BOARD) ||
-       !haskey(state.context.perceived_externals, :BOARD)
-        return deepcopy(state.context.perceived_externals)
+    if !haskey(state.memory.episodic_antecedant, :BOARD) ||
+       !haskey(state.memory.episodic_current, :BOARD)
+        return deepcopy(state.memory.episodic_current)
     end
 
-    per_ext_post = deepcopy(state.context.perceived_externals)
+    per_ext_post = deepcopy(state.memory.episodic_current)
     used_rules_sumscore = 0.0f0
     used_rules_amount = 0
 
@@ -1038,7 +1065,7 @@ function predict(state::NaceState, grid_width::Int, grid_height::Int)
     # Helper function to check if a rule is applicable at a specific cell
     function is_rule_applicable(rule::Rule, x::Int, y::Int, board)
         # Skip if action doesn't match
-        if rule.precondition.action != state.context.act_ante
+        if rule.precondition.action != state.memory.act_ante
             return false
         end
 
@@ -1067,7 +1094,7 @@ function predict(state::NaceState, grid_width::Int, grid_height::Int)
     predictions = Dict{Tuple{Int,Int},Vector{Tuple{Rule,Float32}}}()
 
     # First pass: gather all possible predictions for each cell
-    board = state.context.perceived_externals[:BOARD]
+    board = state.memory.episodic_current.board
     for y ∈ 1:grid_height, x ∈ 1:grid_width
         # Skip if coordinates are out of bounds
         if y > size(board, 1) || x > size(board, 2)
@@ -1106,7 +1133,7 @@ function predict(state::NaceState, grid_width::Int, grid_height::Int)
 
         try
             # Update the cell with the predicted value
-            per_ext_post[:BOARD][y, x] = Cell(x, y, best_rule.consequence.cell_value)
+            per_ext_post.board[y, x] = Cell(x, y, best_rule.consequence.cell_value)
             used_rules_sumscore += best_rule.score
             used_rules_amount += 1
             @debug "Applied prediction rule" position = (x, y) rule =
@@ -1328,8 +1355,8 @@ function bfs_with_predictor(
 
     # Helper function to create a hash for a state
     function state_hash(state::NaceState)
-        if haskey(state.context.perceived_externals, :BOARD)
-            board = state.context.perceived_externals[:BOARD]
+        if haskey(state.memory.episodic_current, :BOARD)
+            board = state.memory.episodic_current.board
             # Create a string representation of the board
             return join([cell.item for cell ∈ vec(board)], "")
         end
@@ -1353,8 +1380,8 @@ function bfs_with_predictor(
 
         # Check for goal states - add a bonus for reaching a goal
         goal_bonus = 0.0f0
-        if haskey(current_state.context.perceived_externals, :BOARD)
-            board = current_state.context.perceived_externals[:BOARD]
+        if haskey(current_state.memory.episodic_current, :BOARD)
+            board = current_state.memory.episodic_current.board
             for cell ∈ vec(board)
                 if cell.item == "goal"
                     goal_bonus += 10.0f0  # Big bonus for finding a goal
@@ -1383,11 +1410,11 @@ function bfs_with_predictor(
 
             # Create a copy of the state and apply the action
             next_state = deepcopy(current_state)
-            next_state.context.act_ante = string(action)
+            next_state.memory.act_ante = string(action)
 
             # Predict the next state
             predicted_world = predict(next_state, 7, 7)  # Using fixed size for now
-            next_state.context.perceived_externals = predicted_world
+            next_state.memory.episodic_current = predicted_world
 
             # Calculate score for this state
             # Base score is the state value
@@ -1478,32 +1505,26 @@ Update the global bird's eye view map based on the current perception.
 This maintains a persistent global map of the environment by combining observations.
 """
 function update_bird_view(state::NaceState)
-    # Check if we have the required board states
-    if !haskey(state.context.perceived_externals, :BOARD)
-        @warn "Missing board in externals"
-        return state.context.perceived_externals
-    end
-
-    board = state.context.perceived_externals[:BOARD]
+    board = state.memory.episodic_current.board
 
     # Get or create global map
-    if !haskey(state.context.perceived_externals, :GLOBAL_MAP)
-        # Initialize global map with a reasonable size (larger than local view)
-        global_height, global_width = 20, 20
-        state.context.perceived_externals[:GLOBAL_MAP] =
-            Matrix{Cell}([Cell(j, i, "unseen") for i ∈ 1:global_height, j ∈ 1:global_width])
-    end
+    # if !haskey(state.memory.episodic_current, :GLOBAL_MAP)
+    #     # Initialize global map with a reasonable size (larger than local view)
+    #     global_height, global_width = 20, 20
+    #     state.memory.episodic_current[:GLOBAL_MAP] =
+    #         Matrix{Cell}([Cell(j, i, "unseen") for i ∈ 1:global_height, j ∈ 1:global_width])
+    # end
 
-    global_map = state.context.perceived_externals[:GLOBAL_MAP]
+    # global_map = state.memory.episodic_current[:GLOBAL_MAP]
 
     # Get agent position and direction
-    height, width = size(board)
-    agent_y, agent_x = div(height, 2), div(width, 2)
-    direction = get(state.context.perceived_externals, :DIR, 0)
+    # height, width = size(board)
+    # agent_y, agent_x = div(height, 2), div(width, 2)
+    direction = state.memory.episodic_current.direction
 
     # Calculate global center position (where agent is located)
     # Assume global map center is at (10, 10) for simplicity
-    global_center_y, global_center_x = 10, 10
+    # global_center_y, global_center_x = 10, 10
 
     # Update global map based on current perception
     for I ∈ CartesianIndices(board)
@@ -1527,5 +1548,5 @@ function update_bird_view(state::NaceState)
     # Log the update
     @debug "Updated global bird view map" size = size(global_map)
 
-    return state.context.perceived_externals
+    return state.memory.episodic_current
 end

@@ -81,15 +81,23 @@ Returns the chosen action, does not have side-effects except for updating the ag
 """
 function (agent::NaceAgent)(obs)
     percept_state = agent.perceptor(obs)
-    values = percept_state[:VALUES]
-    per_ext_ante = if isempty(agent.state.context.per_ext_ante)
+    # Get values from the board matrix
+    values = if !isempty(percept_state.board)
+        map(
+            cell -> cell.item == "goal" ? 1 : (cell.item == "lava" ? -1 : 0),
+            vec(percept_state.board),
+        )
+    else
+        Int[]
+    end
+    per_ext_ante = if isempty(agent.state.memory.episodic_antecedant)
         percept_state
     else
-        agent.state.context.per_ext_ante
+        agent.state.memory.episodic_antecedant
     end
-    new_context = AgentContext(percept_state, per_ext_ante, agent.state.context.act_ante)
+    new_memory = Memory(percept_state, per_ext_ante, agent.state.memory.act_ante)
     agent.state =
-        NaceState(agent.state.t, agent.state.focus, agent.state.rules, values, new_context)
+        NaceState(agent.state.t, agent.state.focus, agent.state.rules, values, new_memory)
     agent.state = cycle(agent.state)
     agent.effector(agent.policy(agent.state))
 end
@@ -104,40 +112,16 @@ data structure and returns a representation usable within the agent's internal
 logic.
 """
 function nace_perceptor(obs)
-    # Ensure we have the required observation fields
-    if !haskey(obs, "image") || !haskey(obs, "direction")
-        return Dict{Symbol,Any}(
-            :DIR => 0,
-            :BOARD => Matrix{Cell}(undef, 0, 0),
-            :TASK => "",
-            :VALUES => Float32[],
-        )
-    end
-
     # Create the board representation
-    try
-        objects = map(i -> IDX_TO_OBJECT[i], obs["image"][:, :, 1])
-        board = reshape(
-            [Cell(idx[2], idx[1], objects[idx]) for idx ∈ CartesianIndices(objects)],
-            size(objects),
-        )
-        values = map(obj -> obj == "goal" ? 1 : (obj == "lava" ? -1 : 0), vec(objects))
+    objects = map(i -> IDX_TO_OBJECT[i], obs["image"][:, :, 1])
+    board = reshape(
+        [Cell(idx[2], idx[1], objects[idx]) for idx ∈ CartesianIndices(objects)],
+        size(objects),
+    )
+    values = map(obj -> obj == "goal" ? 1 : (obj == "lava" ? -1 : 0), vec(objects))
 
-        return Dict{Symbol,Any}(
-            :DIR => obs["direction"],
-            :BOARD => board,
-            :TASK => get(obs, "mission", ""),
-            :VALUES => values,
-        )
-    catch e
-        # Return empty state if there's any error
-        return Dict{Symbol,Any}(
-            :DIR => 0,
-            :BOARD => Matrix{Cell}(undef, 0, 0),
-            :TASK => "",
-            :VALUES => Float32[],
-        )
-    end
+    # Create EpisodicMemory with board as the main field
+    return EpisodicMemory(board, Direction(obs["direction"]))
 end
 
 """
@@ -146,7 +130,7 @@ end
 Run the policy
 """
 function nace_policy(state)
-    state.context.act_ante
+    state.memory.act_ante
 end
 
 """

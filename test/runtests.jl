@@ -12,7 +12,7 @@ using NACE
             test_state.focus,
             test_state.rules,
             [0, 0, 0],  # Add some values
-            test_state.context,
+            test_state.memory,
         )
 
         # Create a rule with the new structure
@@ -92,7 +92,7 @@ using NACE
             Cell(3, 3, "yellow"),  # Different consequence
             Cell(3, 2, "blue"),    # Same precondition
             Cell(2, 3, "green"),   # Same precondition
-            "Move forward",         # Same action
+            "Move forward",        # Same action
         )
 
         # Test conflict detection with explicit NACE reference
@@ -105,7 +105,7 @@ using NACE
         @test run_example_random(env)
     end
     @testset "integration:agent" begin
-        env = NACE.gym.make("MiniGrid-LavaCrossingS11N5-v0", render_mode="human")
+        env = NACE.gym.make("MiniGrid-LavaCrossingS9N3-v0", render_mode="human")
 
         """
             run_example(env)
