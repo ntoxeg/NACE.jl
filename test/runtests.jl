@@ -13,6 +13,7 @@ using NACE
             test_state.rules,
             [0, 0, 0],  # Add some values
             test_state.memory,
+            test_state.max_new_rules_per_cycle,
         )
 
         # Create a rule with the new structure

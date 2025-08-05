@@ -1,4 +1,6 @@
 using Logging
+using Dates
+using Random
 global_logger(ConsoleLogger(Logging.Info))
 
 export Rule,
@@ -35,6 +37,32 @@ struct Cell
     y::Int
     item::String
 end
+
+# -----------------------------------------------------------------------------
+# Resource-management helpers to keep data structures from blowing up
+# -----------------------------------------------------------------------------
+
+const MAX_FOCUS_SIZE = 300            # hard cap on how many cells we track each step
+const MAX_RULES = 1_500          # hard cap on how many rules we keep
+
+"""
+    shrink_focus!(focus; max_size=MAX_FOCUS_SIZE)
+
+In-place pruning of the focus set. If the set grows beyond `max_size`, we keep a
+uniform random sample of `max_size` elements and discard the rest.  This keeps
+memory usage predictable and avoids pathological slow-downs when the agent
+looks at a very large area.
+"""
+function shrink_focus!(focus::Set{Cell}; max_size::Int=MAX_FOCUS_SIZE)
+    if length(focus) > max_size
+        kept = Set{Cell}(Random.sample(collect(focus), max_size; replace=false))
+        empty!(focus)
+        union!(focus, kept)
+    end
+    return focus
+end
+
+# (Cell struct moved earlier)
 
 @enum Direction NORTH SOUTH EAST WEST
 
@@ -102,6 +130,18 @@ mutable struct Rule
 end
 
 """
+    prune_rules(rules; max_rules=MAX_RULES) -> Set{Rule}
+
+Returns a new set containing at most `max_rules` rules.  Rules are sorted by
+truth expectation (`truthexp`) and the top-scoring ones are retained.
+"""
+function prune_rules(rules::Set{Rule}; max_rules::Int=MAX_RULES)
+    length(rules) <= max_rules && return rules                   # Nothing to do
+    sorted_rules = sort(collect(rules), by=r -> truthexp(r), rev=true)
+    return Set{Rule}(sorted_rules[1:min(max_rules, length(sorted_rules))])
+end
+
+"""
     NaceState(t, focus, rules, values, context)
 
 Agent state structure
@@ -120,6 +160,7 @@ struct NaceState
     rules::Set{Rule}
     values::Vector{Int}
     memory::Memory
+    max_new_rules_per_cycle::Int
 end
 
 """
@@ -137,6 +178,7 @@ init_state() = NaceState(
         EpisodicMemory(Matrix{Cell}(undef, 0, 0), Direction(0)),
         "",
     ),
+    20,
 )
 
 function cond_match(cond1::Precondition, cond2::Precondition)
@@ -352,7 +394,11 @@ function hypothesize(state::NaceState)
         # Generate new hypotheses using properly-typed Cell
         rules = new_hypotheses(state, c)
         @debug "Generated rules for cell" position = (c.x, c.y) rule_count = length(rules)
-        new_rules = union(new_rules, rules)
+        union!(new_rules, rules)
+        if length(new_rules) >= state.max_new_rules_per_cycle
+            @warn "Rule generation limit reached, breaking."
+            break
+        end
     end
 
     # Initialize containers for rule evidence
@@ -741,77 +787,61 @@ function new_hypotheses(agent_state::NaceState, c3::Cell)
     end
 
     rule_count = 0
+    neighbors = Cell[]
     for i ∈ max(1, c3.y - radius):min(height, c3.y + radius)
         for j ∈ max(1, c3.x - radius):min(width, c3.x + radius)
             # Skip the cell itself
             (i == c3.y && j == c3.x) && continue
+            push!(neighbors, board_ante[i, j])
+        end
+    end
 
-            # First precondition cell
-            c1 = board_ante[i, j]
+    if !isempty(neighbors)
+        for _ ∈ 1:10 # Sample 10 pairs of neighbors
+            c1 = rand(neighbors)
+            c2 = rand(neighbors)
+
+            # Skip if cells are the same
+            (c1.x == c2.x && c1.y == c2.y) && continue
 
             # Skip if first cell is unseen
             c1.item == "unseen" && continue
 
-            # Look for a second cell in the radius
-            for k ∈ max(1, c3.y - radius):min(height, c3.y + radius)
-                for l ∈ max(1, c3.x - radius):min(width, c3.x + radius)
-                    # Skip the first cell and the target cell
-                    (k == i && l == j) && continue
-                    (k == c3.y && l == c3.x) && continue
+            # Skip if second cell is unseen
+            c2.item == "unseen" && continue
 
-                    # Early exit if we've generated enough rules for this cell
-                    rule_count >= max_rules && return new_rules
+            # Early exit if we've generated enough rules for this cell
+            rule_count >= max_rules && return new_rules
 
-                    c2 = board_ante[k, l]
+            # Skip if we've already seen this combination of items
+            item_combo = (c1.item, c2.item, c3.item)
+            if item_combo in seen_combinations
+                continue
+            end
+            push!(seen_combinations, item_combo)
 
-                    # Skip if second cell is unseen
-                    c2.item == "unseen" && continue
+            @debug "Considering cells" cell1_pos = (c1.x, c1.y) cell1_item = c1.item cell2_pos =
+                (c2.x, c2.y) cell2_item = c2.item
 
-                    # Skip if we've already seen this combination of items
-                    item_combo = (c1.item, c2.item, c3.item)
-                    if item_combo in seen_combinations
-                        continue
-                    end
-                    push!(seen_combinations, item_combo)
+            # Only generate rules for meaningful state changes
+            if c3.item != board_ante[c3.y, c3.x].item ||
+               (c3.item != c1.item && c3.item != c2.item)
+                # Create a rule linking these cells - updated to use new make_rule signature
+                rule = make_rule(agent_state, :BOARD, c3, c1, c2, action)
 
-                    @debug "Considering cells" cell1_pos = (j, i) cell1_item = c1.item cell2_pos =
-                        (l, k) cell2_item = c2.item
+                # Check if the rule is valid before adding it
+                if is_valid_rule(rule, agent_state.rules)
+                    push!(new_rules, rule)
+                    rule_count += 1
 
-                    # Only generate rules for meaningful state changes
-                    if c3.item != board_ante[c3.y, c3.x].item ||
-                       (c3.item != c1.item && c3.item != c2.item)
-                        # Create a rule linking these cells - updated to use new make_rule signature
-                        rule = make_rule(agent_state, :BOARD, c3, c1, c2, action)
+                    @debug "Generated valid rule" precondition = rule.precondition.expr consequence =
+                        rule.consequence.cell_value
+                else
+                    # Even if the rule is invalid, we should still track it as a negative rule
+                    push!(new_rules, rule)
 
-                        # Prioritize rules involving lava, goals, or walls
-                        # important_item = any(item -> item in ["lava", "goal", "wall"], 
-                        #                     [c1.item, c2.item, c3.item])
-
-                        # Check if the rule is valid before adding it
-                        if is_valid_rule(rule, agent_state.rules)
-                            # If this is an important rule, give it initial positive evidence
-                            # if important_item
-                            #     rule.evidence_pos += 0.1f0
-                            # end
-
-                            push!(new_rules, rule)
-                            rule_count += 1
-
-                            @debug "Generated valid rule" precondition =
-                                rule.precondition.expr consequence =
-                                rule.consequence.cell_value
-                        else
-                            # Even if the rule is invalid, we should still track it as a negative rule
-                            push!(new_rules, rule)
-                            # Mark it as a negative rule with evidence
-                            # FIXME: this is not what negative rules are.
-                            # rule.evidence_neg += 0.2f0
-
-                            @debug "Generated invalid rule as negative rule" precondition =
-                                rule.precondition.expr consequence =
-                                rule.consequence.cell_value
-                        end
-                    end
+                    @debug "Generated invalid rule as negative rule" precondition =
+                        rule.precondition.expr consequence = rule.consequence.cell_value
                 end
             end
         end
@@ -844,7 +874,10 @@ function cycle(state::NaceState)::NaceState
             EpisodicMemory(Matrix{Cell}(undef, 0, 0), Direction(0)),
             "",
         ),
+        state.max_new_rules_per_cycle,
     )
+
+    empty!(state.focus)
 
     # Update global bird view map with current perception
     # if haskey(state.memory.episodic_current, :BOARD)
@@ -871,6 +904,10 @@ function cycle(state::NaceState)::NaceState
         end
     end
     @debug "Added cells around agent to focus" count = length(M_change)
+
+    # Use the accumulated change/mismatch sets as the new focus before hypothesis generation
+    union!(state.focus, M_change, M_prediction_mismatched, M_observation_mismatched)
+    @debug "Focus prepared for hypothesis generation" size = length(state.focus)
 
     rule_memory = RuleMemory(state.rules)
     update_rule_memory(rule_memory)
@@ -928,12 +965,18 @@ function cycle(state::NaceState)::NaceState
             M_change,
             M_prediction_mismatched,
         )
-        @debug "Updated focus" size = length(focus)
+        @debug "Updated focus before pruning" size = length(focus)
+        shrink_focus!(focus)
+        @debug "Updated focus after pruning" size = length(focus)
     end
 
     # Plan the next actions using the improved planning system
+    # Dynamically adapt planning budget based on current rule count.
+    rule_cnt = length(state.rules)
+    max_depth = max(20, 100 - Int(clamp(rule_cnt, 0, 3000) ÷ 50))
+    max_queue_len = max(500, 2000 - Int(clamp(rule_cnt, 0, 3000)))
     planned_actions, score, revisit_actions, age =
-        plan(state, keys(ACTION_TO_IDX), 100, 2000, nothing)
+        plan(state, keys(ACTION_TO_IDX), max_depth, max_queue_len, nothing)
 
     # Determine the next action, preferring planned actions over random ones
     action = if !isempty(planned_actions)
@@ -1020,12 +1063,17 @@ function cycle(state::NaceState)::NaceState
     @info "==== CYCLE END (t=$(state.t)) ===="
 
     # Return the updated state
+    # Prune rule base before carrying it over to the next cycle to keep
+    # computational effort bounded.
+    final_rules = prune_rules(union(state.rules, new_rules))
+
     return NaceState(
         state.t + 1,
         focus,
-        union(state.rules, new_rules),  # Don't add negative rules directly, just use them to adjust positive rules
+        final_rules,
         state.values,
         new_memory,
+        state.max_new_rules_per_cycle,
     )
 end
 
@@ -1363,8 +1411,18 @@ function bfs_with_predictor(
         return "no_board"
     end
 
-    while !isempty(queue) && length(queue) < max_queue_len
+    max_iterations = 10000
+    iter = 0
+    while !isempty(queue) && length(queue) < max_queue_len && iter < max_iterations
         current_state, action_seq, current_score = popfirst!(queue)
+        iter += 1
+
+        # Terminate search if iteration limit reached
+        if iter >= max_iterations
+            @warn "BFS iteration limit reached, terminating early" iterations = iter queue_size =
+                length(queue)
+            break
+        end
 
         # If we've reached max depth, skip this branch
         length(action_seq) >= max_depth && continue
@@ -1471,7 +1529,7 @@ function write_rules_to_file(rules::Set{Rule}, filename::String; append::Bool=fa
             println(io, "Total rules: $(length(rules))")
             println(io, "===================")
         end
-        
+
         # Add timestamp
         println(io, "\nTimestamp: $(now())")
         println(io, "Current rule count: $(length(rules))")

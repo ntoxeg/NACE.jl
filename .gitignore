@@ -37,6 +37,10 @@ __pycache__/
 # Output files
 rules_output.txt
 output-rules-test.txt
+*output*
 
 # Environment variables
 .envrc
+
+# Repo references
+reporef/

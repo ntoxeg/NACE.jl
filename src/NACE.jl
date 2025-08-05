@@ -96,8 +96,14 @@ function (agent::NaceAgent)(obs)
         agent.state.memory.episodic_antecedant
     end
     new_memory = Memory(percept_state, per_ext_ante, agent.state.memory.act_ante)
-    agent.state =
-        NaceState(agent.state.t, agent.state.focus, agent.state.rules, values, new_memory)
+    agent.state = NaceState(
+        agent.state.t,
+        agent.state.focus,
+        agent.state.rules,
+        values,
+        new_memory,
+        agent.state.max_new_rules_per_cycle,
+    )
     agent.state = cycle(agent.state)
     agent.effector(agent.policy(agent.state))
 end
