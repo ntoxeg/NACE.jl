@@ -1460,14 +1460,22 @@ function bfs_with_predictor(
 end
 
 """
-    write_rules_to_file(rules::Set{Rule}, filename::String)
+    write_rules_to_file(rules::Set{Rule}, filename::String; append::Bool=false)
 
-Write the current set of rules to a file for analysis.
+Write the current set of rules to a file for analysis. If append is true, append to existing file.
 """
-function write_rules_to_file(rules::Set{Rule}, filename::String)
-    open(filename, "w") do io
-        println(io, "Total rules: $(length(rules))")
-        println(io, "===================")
+function write_rules_to_file(rules::Set{Rule}, filename::String; append::Bool=false)
+    mode = append ? "a" : "w"
+    open(filename, mode) do io
+        if !append
+            println(io, "Total rules: $(length(rules))")
+            println(io, "===================")
+        end
+        
+        # Add timestamp
+        println(io, "\nTimestamp: $(now())")
+        println(io, "Current rule count: $(length(rules))")
+        println(io, "-------------------")
 
         # Group rules by action
         action_groups = Dict{String,Vector{Rule}}()
