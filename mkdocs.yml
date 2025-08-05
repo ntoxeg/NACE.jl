@@ -1,1 +1,11 @@
-site_name: My Docs
+site_name: NACE.jl
+theme:
+  name: shadcn
+shortcuts:
+    help: 191    # ?
+    next: 39     # right arrow
+    previous: 37 # left arrow
+    search: 83   # s
+nav:
+  - Home: index.md
+  - Design: design.md

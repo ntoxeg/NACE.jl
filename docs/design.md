@@ -1,6 +1,22 @@
-This code implements the Non-Axiomatic Causal Explorer (NACE) agent described in the paper "A grid world agent with favorable inductive biases". Let's break down how rules are represented and how it correlates with the paper.
+# NACE design
+> Overall design document for NACE
 
-**Rule Representation in Code (Focus on `nace.py` and `hypothesis.py`)**
+This repository implements the Non-Axiomatic Causal Explorer (NACE) agent described in the paper "A grid world agent with favorable inductive biases."
+
+## Paper extracts
+![Flowchart](img/nace-flow.png)
+![Observer](img/observer.png)
+![Hypothesizer](img/hypothesizer.png)
+![Planner](img/planner.png)
+![Predictor](img/predictor.png)
+
+## Rule design
+Let's break down how rules are represented and how it correlates with the paper.
+
+![Rule representation](img/rule-rep.png)
+![Rule formulas](img/rule-formulas.png)
+
+**Rule Representation in Code (Based on the old, nonexistent `nace.py` and `hypothesis.py`)**
 
 In the code, a rule is represented as a **tuple of two elements**:
 

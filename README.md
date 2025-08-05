@@ -22,11 +22,11 @@
   - [ ] Verify the rest of the code.
 
 ## Install
-I recommend using Poetry to make a Python virtual env.
-Spawn the env's shell (`eval $(poetry env activate)` or `Invoke-Expression (poetry env activate)`) and run the REPL with `julia --project`, before installing dependencies (`] instantiate`) make sure
+I recommend using uv to make a Python virtual env (`uv sync`, `uv sync --extra dev`, etc.)
+Run the REPL with `uv run julia --project`, before installing dependencies (`] instantiate`) make sure
 to execute `ENV["PYTHON"] = Sys.which("python")` -- that will set PyCall to use your environment's Python. You don't have to run julia from the activated environment after that.
 
-Alternatively, you can run `poetry run julia --project -e 'ENV["PYTHON"] = Sys.which("python"); using Pkg; Pkg.instantiate()'` to do all of the above in one line.
+Alternatively, you can run `uv run julia --project -e 'ENV["PYTHON"] = Sys.which("python"); using Pkg; Pkg.instantiate()'` to do all of the above in one line.
 
 ## Run
 In the REPL, `using NACE` should be enough, some things may be not exported (the API is not yet stable, needless to say) -- those you have to access under the packages namespace (`NACE`). There is a comment in NACE.jl that shows how to spawn a Gym environment in Julia.

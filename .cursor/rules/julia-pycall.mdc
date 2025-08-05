@@ -1,0 +1,6 @@
+---
+description: julia project instantiation; `Pkg.build("PyCall")` invokations.
+alwaysApply: false
+---
+Remember that the python's executable path has to be set to the project's venv one.
+You can do that by making sure that `ENV["PYTHON"] = Sys.which("python")` while the code is running with the venv activated (via `uv run`.)
