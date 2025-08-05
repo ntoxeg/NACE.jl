@@ -2,19 +2,18 @@ using NACE
 env = NACE.gym.make("MiniGrid-LavaCrossingS11N5-v0", render_mode="human")
 
 """
-    run_example(env)
+    run_random_example(env)
 
-Run an example on an environment.
+Run a random policy on an environment.
 """
-function run_example(env)
+function run_random_example(env)
     obs, info = env.reset()
-    agent = NaceAgent(init_state(), nace_policy, nace_perceptor, nace_effector)
-    for _ ∈ 1:10
+    agent = NACE.Agent{Any}(nothing, make_random_policy(env))
+    for _ ∈ 1:100
         action = agent(obs)
         println("Action: $(IDX_TO_ACTION[action])")
         obs, info = env.step(action)
-        println("Current rules: $(agent.state.rules)")
     end
 end
 
-run_example(env)
+run_random_example(env)

@@ -1,23 +1,35 @@
-[tool.poetry]
-name = "NACE"
+[project]
+name = "nace-jl"
 version = "0.1.0"
-description = "Non-Axiomatic Agent: achieving objectives in grid environments using Non-Axiomatic-derived modeling and control algorithms."
-authors = ["Adrian Borucki <ntoxeg@llu.cc>"]
-license = "Apache-2.0"
-keywords = ["NACE", "gym", "agent", "AI"]
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "gymnasium>=1.2.0",
+    "icecream>=2.1.5",
+    "minigrid>=3.0.0",
+    "xminigrid>=0.9.1",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.10,<3.12"
-icecream = "^2.1"
-xminigrid = "^0.6.0"
-gymnasium = "^0.29.1"
-minigrid = "^2.3.1"
+[dependency-groups]
+dev = [
+    "ipython>=9.4.0",
+]
+docs = [
+    "mkdocs>=1.6.1",
+    "mkdocs-shadcn>=0.9.0",
+]
 
-[tool.poetry.group.dev.dependencies]
-black = "^23.7.0"
-ipython = "^8.4.0"
-ruff = "^0.0.277"
+[tool.ruff]
+lint.select = [
+    # Pyflakes
+    "F",
+    # Pycodestyle
+    "E",
+    "W",
+    # isort
+    "I001"
+]
 
-[build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+[tool.ruff.lint.isort]
+known-first-party = ["nace"]
